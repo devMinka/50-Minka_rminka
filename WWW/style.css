@@ -1,0 +1,15 @@
+#contingut_a_imprimir_1, #contingut_a_imprimir_1x1 {
+  overflow: visible !important;
+  height: auto !important;
+  max-height: none !important;
+}
+.leaflet-container, .plot-container {
+  page-break-inside: avoid !important;
+  break-inside: avoid !important;
+}
+@media print {
+  body, html {
+    overflow: visible !important;
+    height: auto !important;
+  }
+}
