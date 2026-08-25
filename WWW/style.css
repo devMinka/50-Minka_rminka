@@ -2,10 +2,14 @@
   overflow: visible !important;
   height: auto !important;
   max-height: none !important;
+  padding-bottom: 80px !important;
 }
 .leaflet-container, .plot-container {
   page-break-inside: avoid !important;
   break-inside: avoid !important;
+}
+.ultima_grafica{
+  margin-bottom: 80px !important;
 }
 @media print {
   body, html {

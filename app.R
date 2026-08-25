@@ -442,9 +442,6 @@ server <- function(input, output,session) {
     especie_actual = NULL,  # per posar en titol nomes si no dona error
     rango_actual = NULL,    # per posar en titol nomes si no dona error
     quad_actual = NULL      # per posar en titol nomes si no dona error
-    
-    
-    
   )
   
   # Funció per errors
@@ -469,17 +466,12 @@ server <- function(input, output,session) {
 
   observeEvent(input$mi_boton, {
 
-
-
     #----------comprovem quela primera lletra del nom cientific es majuscula----
-
-
 
     if ( majuscula_n_cientific(input$especie)==FALSE){
       mostrar_error("El nom científic te que començar en majúscula")
       return()
     }
-
 
     if(stringr::str_count(input$especie, "\\w+")!=2) {
       mostrar_error("El nom científic te que que tindre genere i especie")
@@ -540,8 +532,6 @@ server <- function(input, output,session) {
       expr= {data.frame (Observ_Minka(rv$especie_actual, rv$rango[1],rv$rango[2]))},
 
       error = function(e){
-
-
 
         return()
 
@@ -655,7 +645,8 @@ server <- function(input, output,session) {
 
         leaflet()%>%
 
-          addProviderTiles(providers$Esri.WorldStreetMap,group = "WSMWorld Street Map") %>%
+          addProviderTiles(providers$CartoDB.Positron, group = "CARTO",
+                           options = providerTileOptions(crossOrigin = TRUE)) %>%
           addProviderTiles(providers$Esri.WorldImagery,group = "Satel.lit") %>%
 
 
@@ -706,7 +697,7 @@ server <- function(input, output,session) {
                                       "<br>",
                                       "Quadricula:",(Especies_Minka_quadricula10x10$COORD_10K)))%>%
 
-          addLayersControl(baseGroups = c("World Street Map", "Satel.lit"),
+          addLayersControl(baseGroups = c("CARTO", "Satel.lit"),
                            overlayGroups = c("Nº d´observacions x quadricula","Municipis","Quadricula 10x10","Batimetria"),
                            options = layersControlOptions(collapsed = TRUE))  %>%
 
@@ -960,7 +951,8 @@ server <- function(input, output,session) {
 
           leaflet()%>%
 
-            addProviderTiles(providers$Esri.WorldStreetMap,group = "WSMWorld Street Map") %>%
+            addProviderTiles(providers$CartoDB.Positron, group = "CARTO",
+                             options = providerTileOptions(crossOrigin = TRUE)) %>%
             addProviderTiles(providers$Esri.WorldImagery,group = "Satel.lit") %>%
 
             addPolygons(data = Quadricules_10x10_sf[index[1],],
@@ -1043,7 +1035,7 @@ server <- function(input, output,session) {
 
 
 
-            addLayersControl(baseGroups = c("World Street Map", "Satel.lit"),
+            addLayersControl(baseGroups = c("CARTO", "Satel.lit"),
                              overlayGroups = c("Nº d´observacions x quadricula 1x1","Municipis","Quadricula 1x1","Quadricula 10x10","Batimetria"),
                              options = layersControlOptions(collapsed = TRUE))  %>%
 
@@ -1221,7 +1213,8 @@ server <- function(input, output,session) {
 
           leaflet()%>%
 
-            addProviderTiles(providers$Esri.WorldStreetMap,group = "WSMWorld Street Map") %>%
+            addProviderTiles(providers$CartoDB.Positron, group = "CARTO",
+                             options = providerTileOptions(crossOrigin = TRUE)) %>%
             addProviderTiles(providers$Esri.WorldImagery,group = "Satel.lit") %>%
 
 
@@ -1244,7 +1237,7 @@ server <- function(input, output,session) {
                         popup =  paste ("Codi quadricula: ",Quadricules_1x1_sf$COD1X1),
                         group ="Quadricula 1x1") %>%
 
-            addLayersControl(baseGroups = c("World Street Map", "Satel.lit"),overlayGroups = c("Quadricula 1x1")) %>%
+            addLayersControl(baseGroups = c("CARTO", "Satel.lit"),overlayGroups = c("Quadricula 1x1")) %>%
 
 
              addMarkers(data = observacio_quadricula_10,
@@ -1336,7 +1329,8 @@ server <- function(input, output,session) {
         leaflet() %>%
 
 
-          addTiles() %>%
+          addTiles(providers$CartoDB.Positron,
+                   options = providerTileOptions(crossOrigin = TRUE)) %>%
 
 
           addRasterImage(KernelDensityRaster,

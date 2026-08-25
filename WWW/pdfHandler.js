@@ -1,40 +1,46 @@
-Shiny.addCustomMessageHandler('html2pdf', function(data) {
-  var element = document.getElementById(data.id);
-  
-  // Forcem que tot el contingut sigui visible per la captura
-  var originalOverflow = element.style.overflow;
-  var originalHeight = element.style.height;
-  element.style.overflow = 'visible';
-  element.style.height = 'auto';
+// pdfHandler.js (versión simplificada)
+if (typeof html2pdf === "undefined") {
+  var script = document.createElement("script");
+  script.src = "https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.9.3/html2pdf.bundle.min.js";
+  document.head.appendChild(script);
+  script.onload = initHandler;
+} else {
+  initHandler();
+}
 
-  // Fix per leaflet: invalida mida perquè es repinti sencer
-  if (window.HTMLWidgets) {
-    setTimeout(function() {
-      window.dispatchEvent(new Event('resize'));
-    }, 200);
+function initHandler() {
+  console.log("Handler registrado");
+
+  if (typeof Shiny === "undefined") {
+    console.error("Shiny no está cargado todavía.");
+    return;
   }
 
-  var opt = {
-    margin:       10,
-    filename:     data.filename,
-    image:        { type: 'jpeg', quality: 0.98 },
-    html2canvas:  { 
-      scale: 2, 
-      useCORS: true, 
-      allowTaint: true,
-      scrollY: 0,
-      scrollX: 0,
-      windowWidth: document.documentElement.offsetWidth,
-      windowHeight: document.documentElement.offsetHeight,
-      width: element.scrollWidth,
-      height: element.scrollHeight
-    },
-    jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' },
-    pagebreak:    { mode: ['avoid-all', 'css', 'legacy'] }
-  };
+  Shiny.addCustomMessageHandler("html2pdf", function (message) {
+    var container = document.getElementById(message.id);
+    console.log("Container:", container);
+    if (!container) {
+      console.error("No se encontró el contenedor con id:", message.id);
+      return;
+    }
 
-  html2pdf().set(opt).from(element).save().then(function(){
-    element.style.overflow = originalOverflow;
-    element.style.height = originalHeight;
+    var opt = {
+      margin:       0,
+      filename:    message.filename,
+      image:       { type: "jpeg", quality: 0.98 },
+      html2canvas: { scale: 2, backgroundColor: "#ffffff" },
+      jsPDF:       { unit: "mm", format: "a4", orientation: "portrait" },
+      pagebreak:   { mode: "css" }
+    };
+
+    setTimeout(function () {
+      html2pdf()
+        .set(opt)
+        .from(container)
+        .save()
+        .catch(function (err) {
+          console.error("Error al generar el PDF:", err);
+        });
+    }, 500);
   });
-});
+}
