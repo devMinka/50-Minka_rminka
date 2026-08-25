@@ -328,7 +328,10 @@ ui <- fluidPage(
                      tags$div(
                        class = "titol_sec",textOutput(outputId = "titol_quadricula_1x1")),
                      
-                     leafletOutput(outputId = 'map2'),
+                     
+                     tags$div(
+                       class = "Planol_1",leafletOutput(outputId = 'map2')),
+                    
                      
                      textOutput(outputId = "peu_map2"),
                      
@@ -372,8 +375,9 @@ ui <- fluidPage(
                
                mainPanel(
                  
-                 
-                 leafletOutput(outputId = 'map3'),
+                 tags$div(
+                   class = "Planol_1",leafletOutput(outputId = 'map3')),
+
                  
                  br(),
                  
@@ -412,9 +416,9 @@ ui <- fluidPage(
                  
                  br(),
                  
-                 
-                 leafletOutput(outputId = 'heatmap')
-                 
+                 tags$div(
+                   class = "Planol_1",leafletOutput(outputId = 'heatmap')),
+               
                  
                ) ) ),
     
@@ -743,7 +747,7 @@ server <- function(input, output,session) {
       #--------------------TEXT Peu de mapa-------------------------------------------------------
       
       output$peu_map1 <- renderText({ req(rv$listo_10x10)
-        paste("Observacions per quadricula UTM 10x10  de ", rv$especie_actual," a tot Catalunya de l´any",rv$rango_actual[1], " al ",  rv$rango_actual[2] )})
+        paste("Observacions per quadricula UTM 10x10  de ", rv$especie_actual," a tot Catalunya de l´any",rv$rango[1], " al ",  rv$rango[2] )})
       
       #---------------------Observacions agrupades per mes------------------------------------------------------------
       
