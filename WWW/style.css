@@ -17,3 +17,35 @@
     height: auto !important;
   }
 }
+
+.titol {
+  font-size: 22px;
+  font-weight: bold;
+  text-align: center;
+  margin-bottom: 15px;
+  color: #333;
+}
+
+.titol_sec {
+  font-size: 16px;
+  font-weight: bold;
+  margin-top: 25px;
+  margin-bottom: 10px;
+  color: #444;
+}
+
+.ultima_grafica {
+  margin-bottom: 60px;
+}
+
+#especie{
+  background-color: #d6d6d6 !important;
+  color: #000 !important;
+  font-weight: 700 !important;
+  font-size: 16px !important;
+  border: 2px solid #8a8a8a !important;
+}
+#especie:focus{
+  background-color: #c2c2c2 !important;
+  border-color: #333 !important;
+}

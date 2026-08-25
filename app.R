@@ -771,11 +771,12 @@ server <- function(input, output,session) {
           
           geom_smooth(aes(x= as.numeric(month),y=observacions_mes), method = 'loess', formula = y ~x ,se=FALSE, color = 'red', inherit.aes =FALSE) +
           
-          labs(x="Mes", y= "Num observ", caption = paste("Observacions mensuals acumulades per ", rv$especie_actual," dins tot  Catalunya de l´any",rv$rango[1], " al ",  rv$rango[2] ))+
+          labs(x="Mes", y= "Num observ", caption =stringr::str_wrap( paste("Observacions mensuals acumulades per ", rv$especie_actual," dins tot  Catalunya de l´any",rv$rango[1], " al ",  rv$rango[2] )))+
           
           theme_classic()+theme( panel.background = element_rect(fill = '#f5f5f5'), plot.caption = element_text( hjust = 0.5, size =14))
         
       })
+      
       
       #---------------------Observacions agrupades per any------------------------------------------------------------
       
@@ -801,7 +802,7 @@ server <- function(input, output,session) {
           
           geom_smooth(method = 'loess',formula = y ~ x, se=FALSE, color = 'red') +
           
-          labs(x="Any", y= "Num observ",caption = paste("Observacions anuals ", rv$especie_actual," a tot Catalunya de l´any",rv$rango[1], " al ",  rv$rango[2] )) +
+          labs(x="Any", y= "Num observ",caption = stringr::str_wrap(paste("Observacions anuals ", rv$especie_actual," a tot Catalunya de l´any",rv$rango[1], " al ",  rv$rango[2] ))) +
           
           theme_classic()+theme( panel.background = element_rect(fill = '#f7f9fc'),
                                  
@@ -1110,7 +1111,7 @@ server <- function(input, output,session) {
           
           geom_smooth(aes(x= as.numeric(month),y=observacions_mes), method = 'loess', formula = y ~x, se=FALSE, color = 'red', inherit.aes =FALSE) +
           
-          labs(x="Mes", y= "Num observ",caption = paste("Observacions mensuals acumulades per ", rv$especie_actual," dins la quadricula ", quadricula_10x10_selecc, "de l´any",rv$rango[1], " al ",  rv$rango[2] ))+
+          labs(x="Mes", y= "Num observ",caption = stringr::str_wrap(paste("Observacions mensuals acumulades per ", rv$especie_actual," dins la quadricula ", quadricula_10x10_selecc, "de l´any",rv$rango[1], " al ",  rv$rango[2] )))+
           
           theme_classic()+theme( panel.background = element_rect(fill = '#f5f5f5'),
                                  
@@ -1143,7 +1144,7 @@ server <- function(input, output,session) {
           
           geom_smooth(method = 'loess',formula = y ~ x, se=FALSE, color = 'red') +
           
-          labs(x="Any", y= "Num observ",caption = paste("Observacions anuals ", rv$especie_actual," dins la quadricula ", quadricula_10x10_selecc, "de l´any",rv$rango[1], " al ",  rv$rango[2] )) +
+          labs(x="Any", y= "Num observ",caption =stringr::str_wrap( paste("Observacions anuals ", rv$especie_actual," dins la quadricula ", quadricula_10x10_selecc, "de l´any",rv$rango[1], " al ",  rv$rango[2] ))) +
           
           theme_classic()+theme( panel.background = element_rect(fill = '#f7f9fc'),
                                  
