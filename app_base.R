@@ -1,11 +1,11 @@
 #################################################################################
 ###############################################################################
 
-#APP web analisis de dades per especie de BBDD Minka amb conexio POstgres
+#APP web analisis de dades per especie de BBDD Minka
 
 #Sortida dades amb grau de recerca brutes sense tractar l esforç per quadricula
 
-#Data posada en produccio: 06/09/2026
+#Data posada en produccio: 25/08/26
 
 #llibreria  rminka
 
@@ -60,36 +60,60 @@ library(RPostgres)
 
 library(purrr)
 
-library(pool)
+library(future)
+library(furrr)
 
-options(shiny.sanitize.errors = FALSE)
+future::plan(multisession, workers = 6)
 
 options(shiny.maxRequestSize = 1000*1024^2)
 
+#Preparem capes geografiques-----------------------------------------------------
 
+# Quadricules_10x10_sf <-st_read ("./Quadricules/Quadricules_10x10_lit_30m_.shp")
+# 
+# Quadricules_1x1_sf <-st_read ("./Quadricules/Quadricules_1x1_lit_30m_.shp")
+# 
+# municipis_litorals_sf <-st_read ("./Capes/Municipis_costaners_1.shp")
+# 
+# extensio_catalunya <- st_read( "./Capes/Extensio_cat_1.shp")
+# 
+# batimetria_sf <- st_read("./Capes/Batimetria_IHM_.shp")
 
-#Creo la conexio pero atraves de pool perque nomes es vaci servir quan ho demani la funcio
+Quadricules_10x10_sf <- readRDS("./Quadricules/Quadricules_10x10_lit_30m_.rds")
+Quadricules_1x1_sf <- readRDS("./Quadricules/Quadricules_1x1_lit_30m_.rds")
+municipis_litorals_sf <- readRDS("./Capes/Municipis_costaners_1.rds")
+extensio_catalunya <- readRDS("./Capes/Extensio_cat_1.rds")
+batimetria_sf <- readRDS("./Capes/Batimetria_IHM_.rds")
 
-pool <- pool::dbPool(RPostgres::Postgres(),
-                     dbname = "bvuvabcrsqjxpsfu2hjg",
-                     host = "bvuvabcrsqjxpsfu2hjg-postgresql.services.clever-cloud.com",
-                     port = 8400,
-                     user = "ugnzz7lvvtl57ckg8oxa",
-                     password = "dfkakXRYIpvVlD6tBxEvxoC91Ec78r")
+#Funcio per extreure les dades de Minka----------------------------------------
 
-#Per tancar les conexions quan acabi la app
-
-onStop(function() pool::poolClose(pool))
-
-Quadricules_10x10_sf <- st_read(pool, query = "SELECT * FROM utm10_litoral")%>% 
-  st_transform(4326)
-
-
-municipis_litorals_sf <-st_read(pool, query ="SELECT * FROM mun_lit")%>% 
-  st_transform(4326)
-
-
-
+Observ_Minka <- function(nom_cientific, year1, year2){
+  
+  safe_mnk <- function(yr){
+    tryCatch(
+      rminka::mnk_obs(query = nom_cientific, year = yr, quality = "research", quiet = TRUE),
+      error = function(e) NULL
+    )
+  }
+  
+  # future_map_dfr baja todos los años en paralelo
+  observ2_1 <- furrr::future_map_dfr(
+    year1:year2,
+    safe_mnk,
+    .options = furrr::furrr_options(seed = TRUE),
+    .progress = TRUE
+  )
+  
+  if(is.null(observ2_1) || nrow(observ2_1) == 0) return(NULL)
+  
+  observ2_1 %>%
+    dplyr::filter(taxon_name == nom_cientific) %>%
+    dplyr::mutate(
+      latitut = suppressWarnings(as.numeric(latitude)),
+      longitut = suppressWarnings(as.numeric(longitude))
+    ) %>%
+    dplyr::filter(!is.na(latitut), !is.na(longitut))
+}
 
 #----------Funcio per comprobar si la 1era lletra es majuscula------------------
 
@@ -103,7 +127,7 @@ majuscula_n_cientific <- function(nom_cientific) {
   
 }
 
-
+  
 
 ###############################################################################
 ###############################################################################
@@ -316,7 +340,7 @@ ui <- fluidPage(
                      
                      tags$div(
                        class = "Planol_1",leafletOutput(outputId = 'map2')),
-                     
+                    
                      
                      textOutput(outputId = "peu_map2"),
                      
@@ -362,7 +386,7 @@ ui <- fluidPage(
                  
                  tags$div(
                    class = "Planol_1",leafletOutput(outputId = 'map3')),
-                 
+
                  
                  br(),
                  
@@ -403,7 +427,7 @@ ui <- fluidPage(
                  
                  tags$div(
                    class = "Planol_1",leafletOutput(outputId = 'heatmap')),
-                 
+               
                  
                ) ) ),
     
@@ -443,8 +467,7 @@ server <- function(input, output,session) {
     paleta_muni_ =NULL,    # per compartir paletes i mantenir el format
     especie_actual = NULL,  # per posar en titol nomes si no dona error
     rango_actual = NULL,    # per posar en titol nomes si no dona error
-    quad_actual = NULL,
-    carto_api_key = "cb1_4c84_1_36f348fbae5415a2dff496ac"
+    quad_actual = NULL      # per posar en titol nomes si no dona error
   )
   
   # Funció per errors
@@ -529,88 +552,67 @@ server <- function(input, output,session) {
     # #---------------------- Ens conectem aMinka i generem el df d observacions------
     # #Obtenim les observacions de l especie amb la funcio creada al principi de l app
     
-    #----------Consulta n observacions per any----------------------------------------
     
-    sql_anios <- sqlInterpolate(pool,
-                                "SELECT year, COUNT(*) as observacions_any
-   FROM obs_cat
-   WHERE taxon_name =?esp AND year BETWEEN ?y1 AND ?y2
-   GROUP BY year
-   ORDER BY year",
-                                esp = input$especie, y1 = input$rango[1], y2 = input$rango[2]
-    )
-    
-    Especies_Minka_any <- dbGetQuery(pool, sql_anios)
+    dades_df<- tryCatch(
+      
+      expr= {data.frame (Observ_Minka(rv$especie_actual, rv$rango[1],rv$rango[2]))},
+      
+      error = function(e){
+        
+        return()
+        
+      })
     
     
-    #--------onsulta n observacions per mes----------------------------------------------
-    
-    sql_meses <- sqlInterpolate(pool,
-                                "SELECT month, COUNT(*) as observacions_mes
-   FROM obs_cat
-   WHERE taxon_name =?esp AND year BETWEEN ?y1 AND ?y2
-   GROUP BY month
-   ORDER BY month",
-                                esp = input$especie, y1 = input$rango[1], y2 = input$rango[2]
-    )
-    
-    Especies_Minka_mes <- dbGetQuery(pool, sql_meses)
-    
-    Especies_Minka_mes$mes <- factor(Especies_Minka_mes$month, levels = 1:12, labels =c("Gener", "Febrer", "Març",
-                                                                    "Abril","Maig","Juny","Juliol","Agost","Setembre","Octubre", "Novembre","Decembre"))
-    
-    #-----------Consulta observacions totals per catalunya-----------------------------
-    sql_total <- sqlInterpolate(pool,
-                                "SELECT COUNT(*) as total
-   FROM obs_cat
-   WHERE taxon_name =?esp AND year BETWEEN ?y1 AND ?y2",
-                                esp = input$especie, y1 = input$rango[1], y2 = input$rango[2]
-    )
-    
-    
-    total_catalunya <- dbGetQuery(pool, sql_total)$total[1] %>% as.numeric()
-    #---------Consulta observacions per quadricula---------------------------------------
-    
-    sql_map <- sqlInterpolate(pool,
-                              "SELECT u.*, c.n_obs FROM utm10_litoral u
-   JOIN (SELECT utm10_code, COUNT(*)::int as n_obs FROM obs_cat
-         WHERE taxon_name =?esp AND year BETWEEN ?y1 AND ?y2
-         GROUP BY utm10_code) c
-   ON c.utm10_code = u.coord_10k",
-                              esp = input$especie, y1 = input$rango[1], y2 = input$rango[2]
-    )
-    Especies_Minka_quadricula10x10 <- st_read(pool, query = sql_map) 
-    
-    
-    if (is.null(Especies_Minka_quadricula10x10) || nrow(Especies_Minka_quadricula10x10) == 0){
+    if (is.null(dades_df) || nrow(dades_df) == 0){
       mostrar_error(paste0("No s'han trobat registres per <b>", rv$especie_actual, "</b> a Minka.<br><br>
   Comprova que el nom estigui ben escrit o prova amb un altre interval d'anys.<br><br>
   Si el nom és correcte, pot ser que no hi hagi observacions de recerca per aquesta espècie."))
       return()
     } else{
       
-      Especies_Minka_quadricula10x10<- Especies_Minka_quadricula10x10 %>% st_transform(4326)
-        
+      #-------------------Adjuntem el any al data frame obtingut--------------------------------------------------
       
-      #----------------Total observacions dins les quadricules litorals-----------------------
+      year <-year(dades_df$observed_on )
       
-      total_litoral <- Especies_Minka_quadricula10x10 %>% 
-        sf::st_drop_geometry() %>% 
-        summarise(total = sum(n_obs)) %>% 
-        pull(total)
+      names(year) <-"year"
       
-
+      dades_df <- cbind( dades_df ,year)
       
       #-----------------adjuntem el mes com a factor al dataframe obtingut-----------------------------------------
-   
+      
+      
+      month <-  month(dades_df$observed_on)
+      
+      names(month) <-"month"
+      
+      dades_df <- cbind(dades_df,month)
+      
+      dades_df$month <- factor(dades_df$month, levels = 1:12, labels =c("Gener", "Febrer", "Març",
+                                                                        "Abril","Maig","Juny","Juliol","Agost","Setembre","Octubre", "Novembre","Decembre"))
+      
+      #-----------------------#Ho pasem a capa geografica-------------------------------
+      
+      capa_especie <-  st_as_sf(dades_df, coords = c("longitut","latitut"),crs =  "WGS84" )
+      
+      #La creuem amb la capa d extensio de catalunya per obdindre les obs de Catalunya
+      
+      Observacions_especie<- st_join( extensio_catalunya, capa_especie, join=st_intersects,largest=FALSE)
       
       
       output$espec_catalunya<- renderText(paste("El numero d observacions de ",
                                                 rv$especie_actual," a tot Catalunya del",rv$rango[1]," al ",rv$rango[2],
-                                                " es de : ",total_catalunya))
+                                                " es de : ",nrow(Observacions_especie)))
       
-  
-
+      
+      #----------Creuem les observacions totals amb les quadricules de 10x10---------
+      
+      
+      Observacions_especie10x10<- st_join(Quadricules_10x10_sf, capa_especie
+                                          , join=st_intersects,largest=FALSE)
+      
+      
+      Observacions_especie_NA10x10 <- subset(Observacions_especie10x10, !is.na(taxon_name))
       
       
       #---------------------Observacionns total a Catalunya dins de les quadricules 10x10-------------------
@@ -623,9 +625,18 @@ server <- function(input, output,session) {
       output$espec_quadricula10x10 <-renderText({
         req(rv$listo_10x10)
         paste("El número d´observacions de",
-              rv$especie_actual,"a Catalunya dins del total de quadricules 10x10 marines del",rv$rango[1]," al ",rv$rango[2],
-              " és de : ",total_litoral, " observacions. Per tant hi han ", total_catalunya - total_litoral, " observacions fora les quadricules litorals.")})
-
+              rv$especie_actual,"a Catalunya dins del total de quadricules 10x10 marines del",rv$rango_actual[1]," al ",rv$rango_actual[2],
+              " és de : ",nrow(Observacions_especie_NA10x10), " observacions. Si aquet número es inferior vol dir que hi han observacions fora de les quadricules UTM")})
+      
+      #---------------------Observacions agrupades que quadricula 10x10-------------------------------
+      
+      Especies_Minka_quadricula10x10<-  Observacions_especie_NA10x10 %>%
+        
+        group_by(COORD_10K)  %>%
+        
+        summarise ( n_observacions10x10=n())
+      
+      
       #----------------------Titol mapa quadricula 10x10--------------------------------
       
       output$titol_quadricula <- renderText({
@@ -638,19 +649,19 @@ server <- function(input, output,session) {
       
       pal <- colorRampPalette(c("yellow","red"))(4)
       
-      paleta_espec <- colorBin(palette = pal , domain =Especies_Minka_quadricula10x10$n_obs, bins = 4)
+      paleta_espec <- colorBin(palette = pal , domain =Especies_Minka_quadricula10x10$n_observacions10x10, bins = 4)
       
       #4 colors per la batimetria
       
       pal_bat <-c("#CCFBFF","#66BFFF","#3388FF","#0040FF")
       
-      # paleta_batimetr <-colorFactor(palette = pal_bat, domain = ((batimetria_sf$PROF)))
+      paleta_batimetr <-colorFactor(palette = pal_bat, domain = ((batimetria_sf$PROF)))
       
       #12 colors per les comarques
       
       pal_mun <- rainbow (12)
       
-      paleta_muni <-colorFactor(palette = pal_mun, domain = ((municipis_litorals_sf$comarques_)))
+      paleta_muni <-colorFactor(palette = pal_mun, domain = ((municipis_litorals_sf$Comarques_)))
       
       
       #-------------Mapa de quadricules 10x10----------------------------------------
@@ -659,13 +670,9 @@ server <- function(input, output,session) {
       mymap1 <- reactive({
         
         leaflet()%>%
-        
-        addTiles(
-          urlTemplate = paste0("https://basemaps.cartocdn.com/rastertiles/light_all/{z}/{x}/{y}.png?key=", rv$carto_api_key),
-          attribution = '© CARTO © OpenStreetMap',
-          group = "CARTO"
-          ) %>%
           
+          addProviderTiles(providers$Esri.WorldGrayCanvas, group = "CARTO",
+                           options = providerTileOptions(crossOrigin = TRUE)) %>%
           addProviderTiles(providers$Esri.WorldImagery,group = "Satel.lit") %>%
           
           
@@ -673,27 +680,27 @@ server <- function(input, output,session) {
                       stroke = TRUE,
                       smoothFactor = 0.2,
                       fillOpacity = 0.15,
-                      fillColor =  ~paleta_muni(municipis_litorals_sf$comarques_),
+                      fillColor =  ~paleta_muni(municipis_litorals_sf$Comarques_),
                       weight = 1,
                       color = "black",
                       
-                      popup =  paste ("Municipi: ",municipis_litorals_sf$nommuni,
+                      popup =  paste ("Municipi: ",municipis_litorals_sf$NOMMUNI,
                                       "<br>",
-                                      "Comarca: ",municipis_litorals_sf$comarques_,
+                                      "Comarca: ",municipis_litorals_sf$Comarques_,
                                       "<br>",
-                                      "Provincia: ",municipis_litorals_sf$comarque_1),
+                                      "Provincia: ",municipis_litorals_sf$Comarque_1),
                       
                       group = "Municipis")%>%
           
-          # 
-          # addPolylines(data =batimetria_sf,
-          #              stroke = TRUE,
-          #              smoothFactor = 0.2,
-          #              fillOpacity = 0,
-          #              weight = 1,
-          #              color = ~paleta_batimetr(batimetria_sf$PROF),
-          #              popup =  paste ("Isobata: ",batimetria_sf$PROF),
-          #              group ="Batimetria") %>%
+          
+          addPolylines(data =batimetria_sf,
+                       stroke = TRUE,
+                       smoothFactor = 0.2,
+                       fillOpacity = 0,
+                       weight = 1,
+                       color = ~paleta_batimetr(batimetria_sf$PROF),
+                       popup =  paste ("Isobata: ",batimetria_sf$PROF),
+                       group ="Batimetria") %>%
           
           addPolygons(data =Quadricules_10x10_sf,
                       stroke = TRUE,
@@ -701,37 +708,46 @@ server <- function(input, output,session) {
                       fillOpacity = 0,
                       weight = 1,
                       color = "black",
-                      popup =  paste ("Codi quadricula: ",Quadricules_10x10_sf$coord_10k),
+                      popup =  paste ("Codi quadricula: ",Quadricules_10x10_sf$COORD_10K),
                       group ="Quadricula 10x10") %>%
           
           addPolygons(data = Especies_Minka_quadricula10x10,
                       stroke = TRUE,
                       smoothFactor = 0.2,
                       fillOpacity = 0.7,
-                      fillColor = ~paleta_espec(Especies_Minka_quadricula10x10$n_obs),
+                      fillColor = ~paleta_espec(Especies_Minka_quadricula10x10$n_observacions10x10),
                       weight = 1,
                       color = "black",
                       group = "Nº d´observacions x quadricula",
-                      popup =  paste ("Nº d observacions:", as.character(Especies_Minka_quadricula10x10$n_obs),
+                      popup =  paste ("Nº d observacions:", as.character(Especies_Minka_quadricula10x10$n_observacions10x10),
                                       "<br>",
-                                      "Quadricula:",(Especies_Minka_quadricula10x10$coord_10)))%>%
+                                      "Quadricula:",(Especies_Minka_quadricula10x10$COORD_10K)))%>%
           
           addLayersControl(baseGroups = c("CARTO", "Satel.lit"),
-                           overlayGroups = c("Nº d´observacions x quadricula","Municipis","Quadricula 10x10"),
+                           overlayGroups = c("Nº d´observacions x quadricula","Municipis","Quadricula 10x10","Batimetria"),
                            options = layersControlOptions(collapsed = TRUE))  %>%
           
           addLegend(
             
             position = "bottomright",
             pal = paleta_espec,
-            values = Especies_Minka_quadricula10x10$n_obs,
+            values = Especies_Minka_quadricula10x10$n_observacions10x10,
             title = "Nº Observ.",
             opacity = 0.8,
             
             group= "Nº d´observacions x quadricula"
-          )
+          )  %>%
           
-
+          addLegend(
+            
+            position = "bottomleft",
+            pal = paleta_batimetr,
+            values = batimetria_sf$PROF,
+            title = "Isobates",
+            opacity = 0.8,
+            
+            group= "Batimetria"
+          )
         
       })
       
@@ -752,6 +768,7 @@ server <- function(input, output,session) {
       
       #--------------------------------------------------------------------------
       
+      Especies_Minka_mes <- Observacions_especie_NA10x10 %>% group_by(month)  %>% summarise( observacions_mes = n())
       
       #grafic mensual
       
@@ -759,7 +776,7 @@ server <- function(input, output,session) {
       
       output$grafica_mes <- renderPlot({
         
-        ggplot(Especies_Minka_mes,aes (x=mes, y= observacions_mes))+
+        ggplot(Especies_Minka_mes,aes (x=month, y= observacions_mes))+
           
           geom_col(fill ='#32CD75')+scale_x_discrete(drop=FALSE)+
           
@@ -776,12 +793,14 @@ server <- function(input, output,session) {
       
       #---------------------Observacions agrupades per any------------------------------------------------------------
       
-      #--------------------Titol agrupacio per any--------------------------------
+      #--------------------Titol agrupacio per mes--------------------------------
       
       output$titol_graf_any <- renderText({req(rv$listo_10x10);
         "Observacions a Catalunya anuals"})
       
       #--------------------------------------------------------------------------
+      
+      Especies_Minka_any <- Observacions_especie_NA10x10 %>% group_by(year)  %>% summarise( observacions_any = n())
       
       #grafic anual
       
@@ -809,8 +828,10 @@ server <- function(input, output,session) {
       
       #guardem les variables reactives  i posem el token a TRUE
       
-     
+      rv$capa_especie <- capa_especie
+      rv$obs_10x10 <- Observacions_especie_NA10x10
       rv$quad_10x10 <- Especies_Minka_quadricula10x10
+      rv$dades_df <- dades_df
       rv$listo_10x10 <- TRUE
       rv$pal_ <- pal
       rv$paleta_muni_ <- paleta_muni
@@ -837,15 +858,11 @@ server <- function(input, output,session) {
   
   #----------------------------Actualitzacio de select list de quadricules amb nomesles qudricules amb presencai
   
-  observeEvent(rv$quad_10x10, {
-    req(rv$quad_10x10)
-    updateSelectInput(session, inputId="quadricula", 
-                      choices = sort(unique(rv$quad_10x10$coord_10k)))
-  })
+  #updateSelectInput(inputId="quadricula", choices = rv$quad_10x10$COORD_10K)
   
   observeEvent(input$quadricula_button, {
     req(rv$listo_10x10) # si no hay datos de 10x10, no hace nada. Adiós token.
-    req(rv$quad_10x10)
+    req(rv$obs_10x10)
     rv$quad_actual <- input$quadricula
     
     
@@ -870,112 +887,78 @@ server <- function(input, output,session) {
         shinyjs::enable("mi_boton")
         shinyjs::enable("quadricula_button")
         shinyjs::enable("button_heatmap")
-        w$hide()
       }, add = TRUE)
       
       #FI gestio del WAITER
       
       #----------------------------------------------------------------------------
       
-      #Consultes sql per quadricula 1x1
+      #Obtenir index de la qudricula seleccionada en la capa 10x10
       
-      # Capa base quadricula 1x1 de la UTM 10x10 seleccionada
+      index <- which(Quadricules_10x10_sf$COORD_10K == input$quadricula)
       
-      # Capa base quadricula 1x1 de la UTM 10x10 seleccionada 
+      #Obstenir observacions de la quadricula 10x10 seleccionada
       
-      quad_10_selecc_sf <- Quadricules_10x10_sf %>% filter(coord_10k == input$quadricula)
-      
-      sql_q1x1_base <- sqlInterpolate(pool,
-                                      "SELECT u.* FROM utm1_litoral u, utm10_litoral d
-   WHERE d.coord_10k = ?quad10 
-   AND ST_Intersects(ST_Centroid(u.geom), d.geom)",
-                              quad10 = input$quadricula)
-      
-      Quadricules_1x1_en_10x10_sf <- st_read(pool, query = sql_q1x1_base, quiet=TRUE) %>% 
-        st_transform(4326)
-      
-     
-      # Capa de la quadricula UTM 10x10
-      
-      quad_10_selecc_sf <- Quadricules_10x10_sf %>%
-        filter(coord_10k == rv$quad_actual)
-      
-      # Capa de Municipis que toquen aquesta 10x10, també per SQL
-      
-      municipis_litorals_sf_1x1 <- municipis_litorals_sf %>%
-        st_make_valid() %>%
-        st_filter(quad_10_selecc_sf, .predicate = st_intersects)
+      quadricula_10x10_selecc <-Quadricules_10x10_sf[index[1],]
       
       
-      # consulta reconta observacions per quadricula  1x1
       
-      sql_1x1 <- sqlInterpolate(pool,
-                                "SELECT u.geom, u.cod1x1, u.cod10x10, c.n_obs
-   FROM utm1_litoral u
-   JOIN (
-     SELECT utm1_code, COUNT(*)::int as n_obs
-     FROM obs_cat
-     WHERE taxon_name =?esp
-       AND utm10_code =?quad10
-       AND year BETWEEN ?y1 AND ?y2
-     GROUP BY utm1_code
-   ) c ON c.utm1_code = u.cod1x1
-   WHERE u.cod10x10 =?quad10",
-                                esp = rv$especie_actual,
-                                quad10 = input$quadricula,
-                                y1 = as.integer(rv$rango[1]),
-                                y2 = as.integer(rv$rango[2])
-      )
-   
-      #Passem consulta a capa
+      observacio_quadricula_10 <- rv$obs_10x10 %>% dplyr::select("id","taxon_name","COORD_10K","user_id","observed_on",
+                                                                 "user_login","longitude","latitude","uri","month","year","url_picture") %>% dplyr::filter(COORD_10K ==input$quadricula) %>% arrange(observed_on,user_login)
       
-      tmp_1x1 <- st_read(pool, query = sql_1x1, quiet = TRUE)
-      
-      
-      if (is.null(tmp_1x1) || nrow(tmp_1x1) == 0) {
-        
-        # No hi ha observacions a 1x1 -> capa buida
-        
-        Especies_Minka_quadricula1x1 <- st_sf(
-          cod1x1 = character(0),
-          n_observacions1x1 = numeric(0),
-          geom = st_sfc(crs = 4326)
-        )
-        observ_quadr_1x1 <- 0
-        
-      } else {
-        
-        #Si hi han observacions dins de les quadricules 1x1
-        
-        Especies_Minka_quadricula1x1 <- tmp_1x1 %>%
-          mutate(n_observacions1x1 = as.numeric(n_obs)) %>%
-          st_transform(4326)
-        observ_quadr_1x1 <- sum(Especies_Minka_quadricula1x1$n_observacions1x1, na.rm=TRUE)
-      }
-      
-     
       #Titol especie encapçalament 1x1
       
-      output$titol_espec_catalunya_1x1 <-renderText({req(input$quadricula)
-        paste("ANALISIS OBSERVACIONS ",rv$especie_actual, "PER UTM ",input$quadricula)})
-      
-      total_en_quad_10 <- rv$quad_10x10 %>%
-        st_drop_geometry() %>%
-        filter(coord_10k == rv$quad_actual) %>%
-        pull(n_obs) %>%
-        as.numeric()
-      
+      output$titol_espec_catalunya_1x1 <-renderText({req(rv$quad_actual)
+        paste("ANALISIS OBSERVACIONS ",rv$especie_actual, "PER UTM ",rv$quad_actual)})
       
       #Sortida de text del n d observacion de la quadricula 10x10
       
-      output$espec_quadricula <-renderText({req(input$quadricula)
-      paste("El numero d observacions de" ,rv$especie_actual,"dins les quadricula 10x10 ", rv$quad_actual," és de : ",total_en_quad_10)})
+      output$espec_quadricula <-renderText({req(rv$quad_actual)
+        paste("El numero d observacions de" ,rv$especie_actual,"dins les quadricula 10x10 ", rv$quad_actual," és de : ",nrow(observacio_quadricula_10))})
       
-      #--------Text del n d obsercacions 1x1----------------------
+      
+      #---------------------------------------------------------------------------------------------------------
+      
+      #--------------------Tractament per capes a 1x1-------------------------------------
+      
+      
+      municipis_litorals_sf_1x1 <- st_intersection(quadricula_10x10_selecc,municipis_litorals_sf)
+      
+      batimetria_sf_1x1 <- st_intersection(quadricula_10x10_selecc, batimetria_sf)
+      
+      Quadricules_1x1_en_10x10_sf_ <- st_intersection (quadricula_10x10_selecc,Quadricules_1x1_sf)
+      
+      Quadricules_1x1_en_10x10_sf <- distinct (Quadricules_1x1_en_10x10_sf_,COD1X1,.keep_all = TRUE)
+      
+      #-------------------Observacions en quadricules 1x1 dins de la quadricula 10x10 objectiu
+      
+      
+      #Observacions dins de les quadricules 1x1                                                                                        )
+      
+      Observacions_especie1x1_<- st_join(Quadricules_1x1_en_10x10_sf, rv$capa_especie, join=st_intersects,largest=FALSE)
+      
+      
+      Observacions_especie1x1 <- subset(Observacions_especie1x1_,COORD_10K = input$quadricula)
+      
+      
+      Observacions_especie_NA1x1 <- subset(Observacions_especie1x1, !is.na(taxon_name))
+      
+      #Reconte d observacions per quadricula 1x1
+      
+      Especies_Minka_quadricula1x1<-  Observacions_especie_NA1x1 %>%
+        
+        group_by(COD1X1)  %>%
+        
+        summarise ( n_observacions1x1=n())
+      
+      
+      #--------Total suma observ quadricules 1x1----------------------
+      
+      observ_quadr_1x1 <- sum(Especies_Minka_quadricula1x1$n_observacions1x1)
       
       output$total_quadr1x1 <-renderText({req(rv$quad_actual)
         
-        paste("D´aquestes observacions, dins les quadricules 1x1 n´hi han: ",observ_quadr_1x1," . Per tant les observacions que queden fora de les quadricules 1x1 son: ", total_en_quad_10 - observ_quadr_1x1, "observacions")})
+        paste("D´aquestes observacions, dins les quadricules 1x1 n´hi han: ",observ_quadr_1x1," . Per tant les observacions que queden fora de les quadricules 1x1 son: ", nrow(observacio_quadricula_10)-observ_quadr_1x1, "observacions")})
       
       #----------------------Titol mapa quadricula 10x10--------------------------------
       
@@ -995,47 +978,65 @@ server <- function(input, output,session) {
         
         leaflet()%>%
           
-          addTiles(
-            urlTemplate = paste0("https://basemaps.cartocdn.com/rastertiles/light_all/{z}/{x}/{y}.png?key=", rv$carto_api_key),
-            attribution = '© CARTO © OpenStreetMap',
-            group = "CARTO"
-          ) %>%
-          
+          addProviderTiles(providers$CartoDB.Positron, group = "CARTO",
+                           options = providerTileOptions(crossOrigin = TRUE)) %>%
           addProviderTiles(providers$Esri.WorldImagery,group = "Satel.lit") %>%
           
-          addPolygons(data = quad_10_selecc_sf,
+          addPolygons(data = Quadricules_10x10_sf[index[1],],
                       stroke = TRUE,
                       smoothFactor = 0.2,
                       fillOpacity = 0,
                       weight = 1.5,
                       color = "black",
-                      popup =  paste ("Codi quadricula: ",quad_10_selecc_sf$coord_10k),
+                      popup =  paste ("Codi quadricula: ",quadricula_10x10_selecc$COORD_10K),
                       group ="Quadricula 10x10") %>%
-
+          
           addPolygons(data = municipis_litorals_sf_1x1 ,
                       stroke = TRUE,
                       smoothFactor = 0.2,
                       fillOpacity = 0.25,
-                      fillColor =  ~rv$paleta_muni_(municipis_litorals_sf_1x1$comarques_),
+                      fillColor =  ~rv$paleta_muni_(municipis_litorals_sf_1x1$Comarques_),
                       weight = 1,
                       color = "black",
                       
-                      popup =  paste ("Municipi: ",municipis_litorals_sf_1x1$nommuni,
+                      popup =  paste ("Municipi: ",municipis_litorals_sf_1x1$NOMMUNI,
                                       "<br>",
-                                      "Comarca: ",municipis_litorals_sf_1x1$comarques_,
+                                      "Comarca: ",municipis_litorals_sf_1x1$Comarques_,
                                       "<br>",
-                                      "Provincia: ",municipis_litorals_sf_1x1$comarque_1),
+                                      "Provincia: ",municipis_litorals_sf_1x1$Comarque_1),
                       
                       group = "Municipis") %>%
           
+          addWMSTiles(baseUrl = "https://geoserveis.icgc.cat/servei/catalunya/batimetria/wms?", layers= "isobates_clar_2500000", group= "batimetria",options=
+                        
+                        WMSTileOptions(format = "image/png",transparent = TRUE )) %>%
           
-          addWMSTiles(
-            baseUrl = "https://geoserveis.icgc.cat/servei/catalunya/batimetria/wms?",
-            layers = "isobates_clar_2500000,isobates_clar_600000,isobates_clar_300000,isobates_clar_100000,isobates_clar_5000",
-            group = "batimetria",
-            options = WMSTileOptions(format = "image/png", transparent = TRUE, version = "1.3.0"),
-            attribution = "ICGC"
-          ) %>%
+          addWMSTiles(baseUrl = "https://geoserveis.icgc.cat/servei/catalunya/batimetria/wms?", layers= "isobates_clar_600000", group= "batimetria", options=
+                        
+                        WMSTileOptions(format = "image/png",transparent = TRUE)) %>%
+          
+          addWMSTiles(baseUrl = "https://geoserveis.icgc.cat/servei/catalunya/batimetria/wms?", layers= "isobates_clar_300000", group= "batimetria", options=
+                        
+                        WMSTileOptions(format = "image/png",transparent = TRUE )) %>%
+          
+          
+          addWMSTiles(baseUrl = "https://geoserveis.icgc.cat/servei/catalunya/batimetria/wms?", layers= "isobates_clar_100000", group= "batimetria", options=
+                        
+                        WMSTileOptions(format = "image/png",transparent = TRUE )) %>%
+          
+          addWMSTiles(baseUrl = "https://geoserveis.icgc.cat/servei/catalunya/batimetria/wms?", layers= "isobates_clar_5000", group= "batimetria" , options=
+                        
+                        WMSTileOptions(format = "image/png",transparent = TRUE )) %>%
+          
+          
+          # addPolylines(data =batimetria_sf_1x1,
+          #              stroke = TRUE,
+          #              smoothFactor = 0.2,
+          #              fillOpacity = 0,
+          #              weight = 1,
+          #              color = ~paleta_batimetr( batimetria_sf_1x1$PROF),
+          #              popup =  paste ("Isobata: ", batimetria_sf_1x1$PROF),
+          #              group ="Batimetria") %>%
           
           addPolygons(data =  Quadricules_1x1_en_10x10_sf,
                       stroke = TRUE,
@@ -1043,7 +1044,7 @@ server <- function(input, output,session) {
                       fillOpacity = 0,
                       weight = 1,
                       color = "red",
-                      popup =  paste ("Codi quadricula: ", Quadricules_1x1_en_10x10_sf$cod1x1 ),
+                      popup =  paste ("Codi quadricula: ",Quadricules_1x1_sf$COD1X1),
                       group ="Quadricula 1x1") %>%
           
           addPolygons(data = Especies_Minka_quadricula1x1,
@@ -1054,15 +1055,15 @@ server <- function(input, output,session) {
                       weight = 1,
                       color = "black",
                       group = "Nº d´observacions x quadricula 1x1",
-                      popup =  ~paste ("Nº d observacions:", as.character(Especies_Minka_quadricula1x1$n_observacions1x1),
+                      popup =  paste ("Nº d observacions:", as.character(Especies_Minka_quadricula1x1$n_observacions1x1),
                                       "<br>",
-                                      "Quadricula:",(Especies_Minka_quadricula1x1$cod1x1)))%>%
+                                      "Quadricula:",(Especies_Minka_quadricula1x1$COD1X1)))%>%
           
           
           
           
           addLayersControl(baseGroups = c("CARTO", "Satel.lit"),
-                           overlayGroups = c("Nº d´observacions x quadricula 1x1","Municipis","Quadricula 1x1","Quadricula 10x10","batimetria"),
+                           overlayGroups = c("Nº d´observacions x quadricula 1x1","Municipis","Quadricula 1x1","Quadricula 10x10","Batimetria"),
                            options = layersControlOptions(collapsed = TRUE))  %>%
           
           addLegend(
@@ -1108,72 +1109,358 @@ server <- function(input, output,session) {
       
       #----------------------Grafic mensuals 1x1---------------------------------------------------------
       
-      # Especies_Minka_mes_1x1 <- observacio_quadricula_10 %>% group_by(month)  %>% summarise( observacions_mes = n())
-      # 
-      # #grafic mensual
-      # 
-      # 
-      # output$grafica_mes_1x1 <- renderPlot({
-      #   
-      #   ggplot(Especies_Minka_mes_1x1,aes (x=month, y= observacions_mes))+
-      #     
-      #     geom_col(fill ='#32CD75')+scale_x_discrete(drop=FALSE)+
-      #     
-      #     geom_text(aes(label = observacions_mes), vjust= -0.5) +
-      #     
-      #     geom_smooth(aes(x= as.numeric(month),y=observacions_mes), method = 'loess', formula = y ~x, se=FALSE, color = 'red', inherit.aes =FALSE) +
-      #     
-      #     labs(x="Mes", y= "Num observ",caption = stringr::str_wrap(paste("Observacions mensuals acumulades per ", rv$especie_actual," dins la quadricula ", quad_10_selecc_sf, "de l´any",rv$rango[1], " al ",  rv$rango[2] )))+
-      #     
-      #     theme_classic()+theme( panel.background = element_rect(fill = '#f5f5f5'),
-      #                            
-      #                            plot.caption = element_text( hjust = 0.5, size =14))
-      #   
-      # })
-      # 
-      # #---------------------------------------------------------------------------------------------------------
-      # 
-      # #-------------Analisis anual der quadicula 1x1-----------------------------------------------------------
-      # 
-      # #---------------------------------------------------------------------------------------------------------
-      # 
-      # #----------------------Titol grafic anual 1x1--------------------------------
-      # 
-      # output$titol_graf_any_1x1 <- renderText({req(rv$quad_actual)
-      #   paste("Observacions UTM ",rv$quad_actual," totals anual")})
-      # 
-      # #---------------------Grafic anual 1x1---------------------------------------------
-      # 
-      # Especies_Minka_any_1x1 <- observacio_quadricula_10 %>% group_by(year)  %>% summarise( observacions_any = n())
-      # 
-      # output$grafica_any_1x1 <- renderPlot({
-      #   
-      #   ggplot(Especies_Minka_any_1x1,aes (x=year, y= observacions_any))+
-      #     
-      #     geom_col(fill='#3498db')+ scale_x_continuous(breaks = rv$rango[1]:rv$rango[2],limits = (x = c(rv$rango[1]-1,rv$rango[2]+1)))+
-      #     
-      #     geom_text(aes(label = observacions_any), vjust= -0.5) +
-      #     
-      #     geom_smooth(method = 'loess',formula = y ~ x, se=FALSE, color = 'red') +
-      #     
-      #     labs(x="Any", y= "Num observ",caption =stringr::str_wrap( paste("Observacions anuals ", rv$especie_actual," dins la quadricula ", quad_10_selecc_sf, "de l´any",rv$rango[1], " al ",  rv$rango[2] ))) +
-      #     
-      #     theme_classic()+theme( panel.background = element_rect(fill = '#f7f9fc'),
-      #                            
-      #                            plot.caption = element_text( hjust = 0.5, size =14))
-      #   
-      # })
+      Especies_Minka_mes_1x1 <- observacio_quadricula_10 %>% group_by(month)  %>% summarise( observacions_mes = n())
+      
+      #grafic mensual
+      
+      
+      output$grafica_mes_1x1 <- renderPlot({
+        
+        ggplot(Especies_Minka_mes_1x1,aes (x=month, y= observacions_mes))+
+          
+          geom_col(fill ='#32CD75')+scale_x_discrete(drop=FALSE)+
+          
+          geom_text(aes(label = observacions_mes), vjust= -0.5) +
+          
+          geom_smooth(aes(x= as.numeric(month),y=observacions_mes), method = 'loess', formula = y ~x, se=FALSE, color = 'red', inherit.aes =FALSE) +
+          
+          labs(x="Mes", y= "Num observ",caption = stringr::str_wrap(paste("Observacions mensuals acumulades per ", rv$especie_actual," dins la quadricula ", quadricula_10x10_selecc, "de l´any",rv$rango[1], " al ",  rv$rango[2] )))+
+          
+          theme_classic()+theme( panel.background = element_rect(fill = '#f5f5f5'),
+                                 
+                                 plot.caption = element_text( hjust = 0.5, size =14))
+        
+      })
+      
+      #---------------------------------------------------------------------------------------------------------
+      
+      #-------------Analisis anual der quadicula 1x1-----------------------------------------------------------
+      
+      #---------------------------------------------------------------------------------------------------------
+      
+      #----------------------Titol grafic anual 1x1--------------------------------
+      
+      output$titol_graf_any_1x1 <- renderText({req(rv$quad_actual)
+        paste("Observacions UTM ",rv$quad_actual," totals anual")})
+      
+      #---------------------Grafic anual 1x1---------------------------------------------
+      
+      Especies_Minka_any_1x1 <- observacio_quadricula_10 %>% group_by(year)  %>% summarise( observacions_any = n())
+      
+      output$grafica_any_1x1 <- renderPlot({
+        
+        ggplot(Especies_Minka_any_1x1,aes (x=year, y= observacions_any))+
+          
+          geom_col(fill='#3498db')+ scale_x_continuous(breaks = rv$rango[1]:rv$rango[2],limits = (x = c(rv$rango[1]-1,rv$rango[2]+1)))+
+          
+          geom_text(aes(label = observacions_any), vjust= -0.5) +
+          
+          geom_smooth(method = 'loess',formula = y ~ x, se=FALSE, color = 'red') +
+          
+          labs(x="Any", y= "Num observ",caption =stringr::str_wrap( paste("Observacions anuals ", rv$especie_actual," dins la quadricula ", quadricula_10x10_selecc, "de l´any",rv$rango[1], " al ",  rv$rango[2] ))) +
+          
+          theme_classic()+theme( panel.background = element_rect(fill = '#f7f9fc'),
+                                 
+                                 plot.caption = element_text( hjust = 0.5, size =14))
+        
+      })
       
       
       
       
-    }  # tancament de l else
+      
+      #=======================================================================================
+      #------------------Taula de les observacions individuals de la quadricula 10x10
+      #====================================================================================
+      
+      #Creem link d imatges visibles al DT
+      
+      contingut <- sapply(observacio_quadricula_10$url_picture, function(x){paste0("data:image/",tools::file_ext(x), ";base64,",
+                                                                                   
+                                                                                   base64enc::base64encode(x))})
+      
+      observacio_quadricula_10 <- cbind(observacio_quadricula_10,contingut)
+      
+      imatge <- sapply(observacio_quadricula_10$contingut,function(x){HTML(paste0("<img src='",x,"' width='75' height='75'>"))})
+      
+      observacio_quadricula_10 <- cbind(observacio_quadricula_10,imatge)
+      
+      
+      #Dataframe a mostrar en el datatable
+      
+      df<- data.frame("ID"= observacio_quadricula_10$id,
+                      "Imatge"=observacio_quadricula_10$imatge,
+                      "Data"= observacio_quadricula_10$observed_on,
+                      "Observador"=observacio_quadricula_10$user_login,
+                      #"Quadricula 1x1" = Observacions_especie_NA1x1$COD1X1,
+                      "URL"=observacio_quadricula_10$uri)
+      
+      #--------------------DataTable de les observadions de la quadricula 1x1---------------------------
+      
+      output$valors_seleccionats <- renderDT({
+        datatable(
+          {
+            
+            {
+              
+              # Nova columna amb enllços
+              
+              df$ID <- mapply(
+                
+                function(nom, uri) {
+                  
+                  as.character(htmltools::a(nom, href = uri,target="_blank"))
+                  
+                }, df$ID,df$URL) # apliquem al ID el URL amb purrr
+              
+              # No mostrem URL sense enllaç
+              
+              df_final <- subset(df, select = -URL)
+              
+            }
+            
+          },     #Caracteristiques amb les que es presenta el datatable
+          escape = FALSE,
+          filter = 'top',  # Filtres en la part superior de la taula
+          options = list(
+            pageLength = 25, # Mostrar 10 files per pag
+            lengthMenu = c(10,25,50), # Opcions de files per pag
+            dom = 'lfrtip'  # Ordre dels elements de la taula (filtrat, longitut, informacio,...)
+          ),
+          rownames = FALSE # No mostrar  num fila
+        )
+      }, sanitize.text.function = function(x) x)
+      
+      #--------------Preparacio de la capa---------------------------------------------
+      
+      #La capa esta a postgres. ens conectem per obtenirla
+      
+      
+      con <- DBI::dbConnect(
+        RPostgres::Postgres(),
+        dbname = "bvuvabcrsqjxpsfu2hjg",
+        host = "bvuvabcrsqjxpsfu2hjg-postgresql.services.clever-cloud.com",
+        port = 8400,
+        user = "ugnzz7lvvtl57ckg8oxa",
+        password = "dfkakXRYIpvVlD6tBxEvxoC91Ec78r"
+      )
+      on.exit({
+        if(exists("con") && DBI::dbIsValid(con)) DBI::dbDisconnect(con)
+      }, add=TRUE)
+      
+      sql <- sprintf("SELECT * FROM public.habitats_x_quadricula WHERE \"COORD_10K\" = '%s'", rv$quad_actual)
+      
+      hab <- tryCatch(st_read(con, query = sql, quiet=TRUE), error=function(e) NULL)
+      
+      if(is.null(hab) || nrow(hab) == 0){
+        hab <- st_sf(geometry=st_sfc()) # capa buida per no petar el mapa
+      }
+      
+      hab <- hab |> st_make_valid() |> st_transform(4326)
+
+      
+      pal_hab <- colorFactor("Paired", domain = hab$CAT_LLEG)
+      
+      #---------------Mapa 3 corregit ---------------
+      output$map3 <- renderLeaflet({
+        m <- leaflet()%>%
+
+          addProviderTiles(providers$CartoDB.Positron, group = "CARTO",
+                           options = providerTileOptions(crossOrigin = TRUE)) %>%
+          
+          addProviderTiles(providers$Esri.WorldImagery,group = "Satel.lit") %>%
+        
+        addPolygons(data = Quadricules_10x10_sf[index[1],],
+                    stroke = TRUE,
+                    smoothFactor = 0.2,
+                    fillOpacity = 0,
+                    fillColor = ,  # Aplicar la paleta al valor
+                    weight = 1,
+                    color = "black",
+                    popup =  paste ("Codi quadricula: ",Quadricules_10x10_sf$COD10X10),
+                    group ="Quadricula 10x10") 
+        
+        # Només afegeix hàbitats si n'hi ha
+          if(!is.null(hab) && nrow(hab) > 0){
+          m <- m %>%
+            addPolygons(data= hab,fillColor = ~pal_hab(CAT_LLEG), fillOpacity=0.7, weight=0.5,
+                        popup = ~paste0(CAT_LLEG, "<br>", NOM_LPRE4), group="Habitats") 
+        }
+      #---------------Mapa de la quadricula observacions en quedricula amb chincheta
+      
+      
+       
+        
+       m %>%
+        
+          
+          addPolygons(data =  Quadricules_1x1_en_10x10_sf,
+                      stroke = TRUE,
+                      smoothFactor = 0.2,
+                      fillOpacity = 0,
+                      weight = 1,
+                      color = "red",
+                      popup =  paste ("Codi quadricula: ",Quadricules_1x1_sf$COD1X1),
+                      group ="Quadricula 1x1") %>%
+          
+          
+          addWMSTiles(baseUrl = "https://geoserveis.icgc.cat/servei/catalunya/batimetria/wms?", layers= "isobates_clar_2500000", group= "batimetria",options=
+                        
+                        WMSTileOptions(format = "image/png",transparent = TRUE )) %>%
+          
+          addWMSTiles(baseUrl = "https://geoserveis.icgc.cat/servei/catalunya/batimetria/wms?", layers= "isobates_clar_600000", group= "batimetria", options=
+                        
+                        WMSTileOptions(format = "image/png",transparent = TRUE)) %>%
+          
+          addWMSTiles(baseUrl = "https://geoserveis.icgc.cat/servei/catalunya/batimetria/wms?", layers= "isobates_clar_300000", group= "batimetria", options=
+                        
+                        WMSTileOptions(format = "image/png",transparent = TRUE )) %>%
+          
+          
+          addWMSTiles(baseUrl = "https://geoserveis.icgc.cat/servei/catalunya/batimetria/wms?", layers= "isobates_clar_100000", group= "batimetria", options=
+                        
+                        WMSTileOptions(format = "image/png",transparent = TRUE )) %>%
+          
+          addWMSTiles(baseUrl = "https://geoserveis.icgc.cat/servei/catalunya/batimetria/wms?", layers= "isobates_clar_5000", group= "batimetria" , options=
+                        
+                        WMSTileOptions(format = "image/png",transparent = TRUE )) %>%
+          
+          
+          addLayersControl(baseGroups = c("CARTO", "Satel.lit"),overlayGroups = c("Quadricula 1x1","batimetria","Habitats")) %>%
+          
+          addMarkers(data = observacio_quadricula_10,
+                     group = "dades_finals",
+                     lng = observacio_quadricula_10$longitude,
+                     lat =  observacio_quadricula_10$latitude,
+                     popup = ~paste0("Link observació: ",'<a href= "',observacio_quadricula_10$uri,'" target="_blank">', 'ID ',observacio_quadricula_10$id,'</a>',
+                                     '<br>',"Observador: ",observacio_quadricula_10$user_login,
+                                     '<br>',"Data: ",observacio_quadricula_10$observed_on,'<br>'),
+                     
+                     
+                     options = markerOptions(draggable = FALSE)) %>%
+          
+          addPopupImages( observacio_quadricula_10$url_picture,group = "dades_finals", width = 150)
+        
+        
+      })
+      
+    } # tancament del condicional del token
     
-  }) #tancament del button 1x1
+    #tancament del waiter
+    session$onFlushed(function() {
+      w$hide()
+    }, once = TRUE)
+    
+    
+  }) # tancament button 1x1
+  
+  #================================================================================================
+  
+  #--------------------Execucio Heatmap-------------------------------------------------------
+  
+  #===================================================================================================
+  
+  observeEvent(input$button_heatmap, {
+    
+    #FIX WAITER per bloquejar botons mentre esperem
+    
+    w$show()
+    shinyjs::disable("mi_boton")
+    shinyjs::disable("quadricula_button")
+    shinyjs::disable("button_heatmap")
+    
+    # per desbloquejar blotons si falla
+    on.exit({
+      shinyjs::enable("mi_boton")
+      shinyjs::enable("quadricula_button")
+      shinyjs::enable("button_heatmap")
+    }, add = TRUE)
+    
+    #FI gestio del WAITER
+    
+    dat <-as.data.table(cbind(rv$obs_10x10$longitude,rv$obs_10x10$latitude))
+    
+    #Cal treballar amb matrius i cal que els noms de la latitut i long estiguin definits
+    
+    colnames(dat)<-c("longitude","latitude")
+    
+    kde <- bkde2D (dat[ , list(longitude, latitude)],
+                   bandwidth=c(.0045, .0068), gridsize = c(750,750))
+    
+    #En la funcio quan mes gran es la grid size mes definit esta
+    
+    #Converitm a raster la funcio de densitat del kernel delspunts
+    
+    KernelDensityRaster <-raster::raster(list(x=kde$x1 ,y=kde$x2 ,z = kde$fhat))
+    
+    #Paleta del heatmap
+    
+    palRaster <- colorNumeric("Spectral", domain = KernelDensityRaster@data@values)
+    
+    #Carreguem els valosr petits com NA per despres fer-los transparents
+    
+    KernelDensityRaster@data@values[which(KernelDensityRaster@data@values < 1)] <- NA
+    
+    palRaster <- colorNumeric("Spectral", domain = KernelDensityRaster@data@values, na.color = "transparent")
+    
+    ##Text heatmap
+    
+    output$espec_heatmap <-renderText(paste("El mapa de desitat del kernel de observacions de",
+                                            rv$especie_actual,"a Catalunya del",rv$rango[1]," al ",rv$rango[2]))
+    
+    
+    
+    ## Heatmap amb leaflet
+    
+    output$heatmap <- renderLeaflet({
+      
+      leaflet() %>%
+        
+        addProviderTiles(providers$CartoDB.Positron,
+                         options = providerTileOptions(crossOrigin = TRUE)) %>%
+        
+        addRasterImage(KernelDensityRaster,
+                       colors = palRaster,
+                       opacity = .8) %>%
+        
+        addLegend(pal = palRaster,
+                  values = KernelDensityRaster@data@values,
+                  title = "Dens. Kernel Obs",
+                  bins = 7,
+                  position = "bottomleft")
+    })
+    
+    #Tancament del waiter
+    session$onFlushed(function(){ w$hide() }, once = TRUE)
+    
+  }) #Tancament button heatmap
   
   
   
-  }  # Tancament del server
+  
+  #==================================================================================================
+  
+  #Boto descarrega de quadricula 10x10
+  
+  #=======================================================================================================
+  
+  observeEvent(input$pdfBtn, {
+    session$sendCustomMessage(
+      "html2pdf",
+      list(id = "contingut_a_imprimir_1", filename = "report_10x10.pdf")
+    )
+  })
+  
+  observeEvent(input$pdfBtn_1x1, {
+    session$sendCustomMessage(
+      "html2pdf",
+      list(id = "contingut_a_imprimir_1x1", filename = "report_1x1.pdf")
+    )
+  })
+  
+  
+  
+}  # Tancament del server
 
 
 
@@ -1182,9 +1469,3 @@ server <- function(input, output,session) {
 shinyApp(ui = ui, server = server)
 
 #Acabat
-
-
-
-
-
-
