@@ -1298,7 +1298,7 @@ server <- function(input, output,session) {
           addMarkers(data = observacio_quadricula_10,
                      lng = observacio_quadricula_10$longitude, lat =  observacio_quadricula_10$latitude,
                      popup = ~paste0("Link observació: ",'<a href= "',observacio_quadricula_10$uri,'" target="_blank">', 'ID ',observacio_quadricula_10$id,'</a>',
-                                     '<br>',"Observador@: ",observacio_quadricula_10$user_login,
+                                     '<br>',"Observador/a: ",observacio_quadricula_10$user_login,
                                      '<br>',"Data: ",observacio_quadricula_10$observed_on),
                      options = markerOptions(draggable = FALSE),
                      group = "observacions quadricula 1x1") %>%
@@ -1356,20 +1356,131 @@ server <- function(input, output,session) {
         )
       }, sanitize.text.function = function(x) x)
       
-      
-     
-      
-      
-  
-      
-     
-      
-     
     
     }  # tancament de l else del waiter
     
   }) #tancament del button 1x1_indiv
   
+  
+  #================================================================================================
+  
+  #--------------------Execucio Heatmap-------------------------------------------------------
+  
+  #===================================================================================================
+  
+  
+  observeEvent(input$button_heatmap, {
+    req(rv$listo_10x10) 
+    req(rv$quad_10x10)
+    rv$quad_actual <- input$quadricula
+    
+  
+    
+    if (rv$listo_10x10 == FALSE ){
+      
+      mostrar_error("Selecciona primer l especie")
+      
+      return()
+      
+    } else {
+      
+      #FIX WAITER per bloquejar botons mentre esperem
+      
+      w$show()
+      shinyjs::disable("mi_boton")
+      shinyjs::disable("quadricula_button")
+      shinyjs::disable("quadricula_button_indiv")
+      shinyjs::disable("button_heatmap")
+      
+      # per desbloquejar blotons si falla
+      on.exit({
+        shinyjs::enable("mi_boton")
+        shinyjs::enable("quadricula_button")
+        shinyjs::enable("quadricula_button_indiv")
+        shinyjs::enable("button_heatmap")
+        w$hide()
+      }, add = TRUE)
+      
+      #FI gestio del WAITER
+      
+      #--------Obtencio dades per tot catalunya per el heatmap--------------------------------------------------------------------
+      
+      sql_kde <- sqlInterpolate(pool,
+                                "SELECT
+     ST_X(ST_Transform(geom,4326)) as longitude,
+     ST_Y(ST_Transform(geom,4326)) as latitude
+   FROM obs_cat
+   WHERE taxon_name =?esp
+   AND year BETWEEN ?y1 AND ?y2
+   AND geom IS NOT NULL
+   AND ST_X(ST_Transform(geom,4326))!= 0
+   AND ST_Y(ST_Transform(geom,4326))!= 0",
+                                esp = rv$especie_actual,
+                                y1 = as.integer(rv$rango[1]),
+                                y2 = as.integer(rv$rango[2])
+      )
+      
+      Observacions_especie_NA10x10 <- dbGetQuery(pool, sql_kde)
+      
+      # ara si
+      dat <- as.data.table(Observacions_especie_NA10x10)
+      
+      
+      #Cal treballar amb matrius i cal que els noms de la latitut i long estiguin definits
+      
+      colnames(dat)<-c("longitude","latitude")
+      
+      kde <- bkde2D (dat[ , list(longitude, latitude)],
+                     bandwidth=c(.0045, .0068), gridsize = c(1000,1000))
+      
+      #En la funcio quan mes gran es la grid size mes definit esta
+      
+      #Converitm a raster la funcio de densitat del kernel delspunts
+      
+      KernelDensityRaster <- raster(list(x=kde$x1 ,y=kde$x2 ,z = kde$fhat))
+      
+      #Paleta del heatmap
+      
+      palRaster <- colorNumeric("Spectral", domain = KernelDensityRaster@data@values)
+      
+      #Carreguem els valosr petits com NA per despres fer-los transparents
+      
+      KernelDensityRaster@data@values[which(KernelDensityRaster@data@values < 1)] <- NA
+      
+      palRaster <- colorNumeric("Spectral", domain = KernelDensityRaster@data@values, na.color = "transparent")
+      
+      ##Text heatmap
+      
+      output$espec_heatmap <-renderText(paste("El mapa de desitat del kernel de observacions de",
+                                              input$especie,"a Catalunya del",input$rango[1]," al ",input$rango[2]))
+      
+      
+      
+      ## Heatmap amb leaflet
+      
+      output$heatmap <- renderLeaflet({
+        
+        leaflet() %>%
+          
+          addTiles(
+            urlTemplate = paste0("https://basemaps.cartocdn.com/rastertiles/light_all/{z}/{x}/{y}.png?key=", rv$carto_api_key),
+            attribution = '© CARTO © OpenStreetMap') %>%
+
+          addRasterImage(KernelDensityRaster,
+                         colors = palRaster,
+                         opacity = .8) %>%
+          
+          addLegend(pal = palRaster,
+                    values = KernelDensityRaster@data@values,
+                    title = "Dens. Kernel Obs",
+                    bins = 7,
+                    position = "bottomleft")
+      })
+     
+      
+    }  # tancament de l else del waiter
+    
+  }) #tancament del button heatmap
   
   
   }  # Tancament del server
