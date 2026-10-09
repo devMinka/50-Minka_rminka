@@ -447,7 +447,6 @@ server <- function(input, output,session) {
   #El primer boto selecciona anys i especie i engloba tota la app-----------------
   rv <- reactiveValues(
    
-    obs_10x10 = NULL,      # Observacions_especie_NA10x10
     quad_10x10 = NULL,     # Especies_Minka_quadricula10x10
     listo_10x10 = FALSE,   #  token
     pal_ = NULL,           # per compartir paletes i mantenir el format
@@ -462,7 +461,8 @@ server <- function(input, output,session) {
     seleccio_10x10 = FALSE,  # flag quadricula 10x10 seleccionada
     habitat_sf = NULL,     #capa d habitats
     pal_hab = NULL,       #Paleta de a capa d habitats
-    observacio_quadricula_10 = NULL
+    observacio_quadricula_10 = NULL,
+    map3_generat = FALSE #per cativar els filtres del DT del map3
   )
   
   # Funció per errors
@@ -815,7 +815,7 @@ server <- function(input, output,session) {
       rv$paleta_muni_ <- paleta_muni
       rv$seleccio_10x10 <- FALSE # Al canviar d especie cal primer seleccionar quadricla
       updateSelectInput(session, "quadricula", choices = rv$quad_10x10$COORD_10K)
-      
+      rv$map3_generat <- FALSE
       rv$quad_actual <- FALSE
       
       #tancament del waiter
@@ -1201,7 +1201,7 @@ server <- function(input, output,session) {
       output$leyenda_habitats <- renderUI({ NULL})
       output$map3 <- renderLeaflet({ NULL })
       output$valors_seleccionats <- DT::renderDataTable({ NULL})
-      
+      rv$map3_generat <- FALSE
       # #---------------------------------------------------------------------------------------------------------
       
     }  # tancament de l else
@@ -1322,25 +1322,15 @@ server <- function(input, output,session) {
         
          
           
-          m <- leaflet()%>%
+          m <- leaflet() %>%
           
           addTiles(
             urlTemplate = paste0("https://basemaps.cartocdn.com/rastertiles/light_all/{z}/{x}/{y}.png?key=", rv$carto_api_key),
             attribution = '© CARTO © OpenStreetMap',
             group = "CARTO") %>%
           
-          addProviderTiles(providers$Esri.WorldImagery,group = "Satel.lit") 
-          
-          # Només afegeix hàbitats si n'hi ha
-                  if(!is.null(habitat_sf) && nrow(habitat_sf) > 0){
-          m <- m %>%
-            addPolygons(data= habitat_sf,
-                        fillColor = ~pal_hab(cat_lleg), 
-                        fillOpacity=0.7, 
-                        weight=0.5,
-                        popup = ~paste0(cat_lleg), 
-                        group="Habitats")}
-          m %>%       
+          addProviderTiles(providers$Esri.WorldImagery,group = "Satel.lit") %>%
+         
                  
           addPolygons(data= rv$quad_10_selecc_sf, 
                       fillOpacity=0, 
@@ -1387,7 +1377,18 @@ server <- function(input, output,session) {
                                      '<br>',"Data: ",rv$observacio_quadricula_10$observed_on,
                                      '<br>'),
                      options = markerOptions(draggable = FALSE),
-                     group = "observacions quadricula 1x1") %>%
+                     group = "observacions quadricula 1x1")
+            
+            # Només afegeix hàbitats si n'hi ha
+            if(!is.null(habitat_sf) && nrow(habitat_sf) > 0){
+              m <- m %>%
+                addPolygons(data= habitat_sf,
+                            fillColor = ~pal_hab(cat_lleg), 
+                            fillOpacity=0.7, 
+                            weight=0.5,
+                            popup = ~paste0(cat_lleg), 
+                            group="Habitats")}
+          m %>%       
             
             addPopupImages( observacio_quadricula_10$url_picture,
                             group = "observacions quadricula 1x1", width = 150) %>%
@@ -1435,7 +1436,8 @@ server <- function(input, output,session) {
                         paste0("<img src='",rv$observacio_quadricula_10$url_picture, "' width='75' height='75' style='object-fit:cover; border-radius:4px;'>")),
         Data = rv$observacio_quadricula_10$observed_on,
         Observador = rv$observacio_quadricula_10$user_login,
-        Codi_CORINE =rv$observacio_quadricula_10$cat_lleg
+        Codi_CORINE =rv$observacio_quadricula_10$cat_lleg,
+        stringsAsFactors = FALSE
       )
 
 
@@ -1443,12 +1445,40 @@ server <- function(input, output,session) {
         DT::datatable(df_plot, escape = FALSE, filter='top',
                       options=list(pageLength=25), rownames=FALSE)
       })
-  #     
+  #   Per activar el mapa amb filtre de datatable
+      
+      rv$map3_generat <- TRUE
+      
+      
     }  # tancament de l else
 
   }) #tancament del button individula
 
-      
+  #================================================================================================
+  
+  #--------------------Execucio map3 observ puntuals amb filtre al DT-------------------------------------------------------
+  
+  #===================================================================================================
+  
+  observeEvent(input$valors_seleccionats_rows_all, {
+    req(rv$map3_generat == TRUE)
+    req(rv$observacio_quadricula_10)
+    
+    idx <- input$valors_seleccionats_rows_all
+    if(is.null(idx)) return()
+    
+    dades_filtrades <- rv$observacio_quadricula_10[idx, , drop=FALSE]
+    
+    leafletProxy("map3") %>%
+      clearMarkers() %>%
+      clearGroup("observacions quadricula 1x1") %>%
+      addMarkers(data = dades_filtrades,
+                 lng = ~longitude, lat = ~latitude,
+                 clusterOptions = markerClusterOptions(spiderfyOnMaxZoom = TRUE),
+                 group = "observacions quadricula 1x1") %>%
+      addPopupImages(dades_filtrades$url_picture, group="observacions quadricula 1x1", width=150)
+  })
+  
   
   #================================================================================================
   
@@ -1513,13 +1543,13 @@ server <- function(input, output,session) {
       # ara si
       dat <- as.data.table(Observacions_especie_NA10x10)
       
-      rv$obs_10x10 <- dat
+
       
       #Cal treballar amb matrius i cal que els noms de la latitut i long estiguin definits
       
-      colnames(rv$obs_10x10)<-c("longitude","latitude")
+      colnames(dat)<-c("longitude","latitude")
       
-      kde <- bkde2D (rv$obs_10x10[ , list(longitude, latitude)],
+      kde <- bkde2D (dat[ , list(longitude, latitude)],
                      bandwidth=c(.0045, .0068), gridsize = c(1000,1000))
       
       #En la funcio quan mes gran es la grid size mes definit esta
