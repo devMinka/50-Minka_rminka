@@ -71,6 +71,7 @@ options(shiny.maxRequestSize = 1000*1024^2)
 #Creo la conexio pero atraves de pool perque nomes es vaci servir quan ho demani la funcio
 
 pool <- pool::dbPool(RPostgres::Postgres(),
+                     bigint = "numeric",
                      dbname = "bvuvabcrsqjxpsfu2hjg",
                      host = "bvuvabcrsqjxpsfu2hjg-postgresql.services.clever-cloud.com",
                      port = 8400,
@@ -367,9 +368,12 @@ ui <- fluidPage(
                
                mainPanel(
                  
-                 tags$div(
-                   class = "Planol_1",leafletOutput(outputId = 'map3')),
-                 
+               tags$div(
+                     class = "Planol_1",leafletOutput(outputId = 'map3')),
+               
+              div(style="background:white; padding:10px; border:1px solid #ccc; border-radius:6px; max-height:750px; overflow-y:auto;",
+                              uiOutput("leyenda_habitats")),
+                   
                  
                  br(),
                  
@@ -442,7 +446,7 @@ server <- function(input, output,session) {
   
   #El primer boto selecciona anys i especie i engloba tota la app-----------------
   rv <- reactiveValues(
-    capa_especie = NULL,
+   
     obs_10x10 = NULL,      # Observacions_especie_NA10x10
     quad_10x10 = NULL,     # Especies_Minka_quadricula10x10
     listo_10x10 = FALSE,   #  token
@@ -450,11 +454,15 @@ server <- function(input, output,session) {
     paleta_muni_ = NULL,    # per compartir paletes i mantenir el format
     especie_actual = NULL,  # per posar en titol nomes si no dona error
     rango_actual = NULL,    # per posar en titol nomes si no dona error
-    quad_actual = NULL,
+    quad_actual = NULL,     #quadricula actual 10x10 seleccionada
     carto_api_key = "cb1_4c84_1_36f348fbae5415a2dff496ac",
-    quad_10_selecc_sf = NULL,
-    municipis_litorals_sf_1x1 = NULL,
-    Quadricules_1x1_en_10x10_sf = NULL
+    quad_10_selecc_sf = NULL,            ## capa de la quadricula  10x10 seleccionada
+    municipis_litorals_sf_1x1 = NULL,    #capa municipis de la quadricula 10x10 seleccionada
+    Quadricules_1x1_en_10x10_sf = NULL,  # capa de la quadricula 1x1 de la 10x10 seleccionada
+    seleccio_10x10 = FALSE,  # flag quadricula 10x10 seleccionada
+    habitat_sf = NULL,     #capa d habitats
+    pal_hab = NULL,       #Paleta de a capa d habitats
+    observacio_quadricula_10 = NULL
   )
   
   # Funció per errors
@@ -513,6 +521,7 @@ server <- function(input, output,session) {
     rv$listo_10x10 <- FALSE
     rv$especie_actual <- input$especie
     rv$rango <- input$rango
+    output$leyenda_habitats <- renderUI({ NULL })
     output$map2 <- renderLeaflet({ NULL })
     output$map3 <- renderLeaflet({ NULL })
     output$valors_seleccionats <- renderDT({ NULL })
@@ -804,8 +813,10 @@ server <- function(input, output,session) {
       rv$listo_10x10 <- TRUE
       rv$pal_ <- pal
       rv$paleta_muni_ <- paleta_muni
-      
+      rv$seleccio_10x10 <- FALSE # Al canviar d especie cal primer seleccionar quadricla
       updateSelectInput(session, "quadricula", choices = rv$quad_10x10$COORD_10K)
+      
+      rv$quad_actual <- FALSE
       
       #tancament del waiter
       
@@ -867,6 +878,9 @@ server <- function(input, output,session) {
       
       #FI gestio del WAITER
       
+      #---------Flag per gestionar la seleccio de la quadricula 10x10
+      
+      rv$seleccio_10x10 <- TRUE
       #----------------------------------------------------------------------------
       
       #Consultes sql per quadricula 1x1
@@ -1179,7 +1193,15 @@ server <- function(input, output,session) {
                                  plot.caption = element_text( hjust = 0.5, size =14))
 
       })
+    #-----------------------------------------------------------------------------
+      
+      #Poso a NULL els valors per contruir el map3 del seguent apartat
+      
 
+      output$leyenda_habitats <- renderUI({ NULL})
+      output$map3 <- renderLeaflet({ NULL })
+      output$valors_seleccionats <- DT::renderDataTable({ NULL})
+      
       # #---------------------------------------------------------------------------------------------------------
       
     }  # tancament de l else
@@ -1195,13 +1217,16 @@ server <- function(input, output,session) {
   observeEvent(input$quadricula_button_indiv, {
     req(rv$listo_10x10) # si no hay datos de 10x10, no hace nada. Adiós token.
     req(rv$quad_10x10)
-    rv$quad_actual <- input$quadricula
-    
-    
     
     if (rv$listo_10x10 == FALSE ){
       
       mostrar_error("Selecciona primer l especie")
+      
+      return()
+    
+    } else if (rv$seleccio_10x10 == FALSE){
+      
+      mostrar_error("Avans tens que seleccionar la quadricula UTM 10x10 i generar el mapa de quadricules UTM 1x1")
       
       return()
       
@@ -1226,36 +1251,96 @@ server <- function(input, output,session) {
       
       #FI gestio del WAITER
       
+  #-----------Obtencio capa habitat de la Gene---------------------------------------
+      
+      #La capa esta a postgres. ens conectem per obtenirla
+
+      sql_hab <- pool::sqlInterpolate(pool,
+              "SELECT * FROM public.habitats_x_utm10_litoral_diss WHERE coord_10k = ?quad",
+              quad = rv$quad_actual)
+      
+      habitat_sf <- sf::st_read(pool, query = sql_hab, quiet = TRUE)
+
+
+      if(is.null(habitat_sf) || nrow(habitat_sf) == 0){
+        habitat_sf <- st_sf(cat_lleg=character(0), geometry=st_sfc(crs=4326))
+        pal_hab <- colorFactor("Paired", domain = character(0))
+        
+      } else {
+        
+        habitat_sf <- habitat_sf %>% st_make_valid() %>% st_transform(4326)
+        pal_hab <- colorFactor("Paired", domain = habitat_sf$cat_lleg)
+      }
+
+      #guardem en variable globals la capa ambiental  y la paleta
+      
+      rv$habitat_sf <- habitat_sf
+      rv$pal_hab <- pal_hab
+      
+      
    #--------Obtencio dades per individu--------------------------------------------------------------------
       
       sql_punts <- sqlInterpolate(pool,
-                                  "SELECT id_minka, observed_on, user_login, uri, url_picture,
-          ST_Y(ST_Transform(geom,4326)) as latitude,
-          ST_X(ST_Transform(geom,4326)) as longitude
-   FROM obs_cat
-   WHERE utm10_code =?quad
-   AND taxon_name =?esp
-   AND year BETWEEN ?y1 AND ?y2",
+                                  "SELECT o.id_minka, o.observed_on, o.user_login, o.uri, o.url_picture,
+                              
+                                  ST_Y(ST_Transform(o.geom,4326)) AS latitude,
+                                  ST_X(ST_Transform(o.geom,4326)) AS longitude,
+                                  h.cat_lleg
+                                  FROM obs_cat o
+                                  LEFT JOIN habitats h ON o.habitat_id = h.id
+                                  WHERE o.utm10_code = ?quad
+                                  AND o.taxon_name = ?esp
+                                  AND o.year BETWEEN ?y1 AND ?y2",
                                   quad = rv$quad_actual,
                                   esp = rv$especie_actual,
                                   y1 = as.integer(rv$rango[1]),
-                                  y2 = as.integer(rv$rango[2])
-      )
+                                  y2 = as.integer(rv$rango[2]))
+                                 
+      
       observacio_quadricula_10 <- dbGetQuery(pool, sql_punts)
       
       observacio_quadricula_10 <- observacio_quadricula_10 %>%
         filter(latitude!= 0, longitude!= 0,!is.na(latitude))
       
+      
+   # <--- guarda-ho al rv
+      
+ #----------------Tractament link imatges----------------------------------------
+      
+      observacio_quadricula_10$url_picture <- gsub(
+        "minka-sdg.org",
+        "observe.minka-sdg.org",
+        observacio_quadricula_10$url_picture,
+        fixed = TRUE
+      )
+      
+      rv$observacio_quadricula_10 <- observacio_quadricula_10
+      
+  #----------Mapa de punts d observacio amb capa d habitat-----------------------    
+      
       output$map3 <- renderLeaflet({
         
-         leaflet() %>%
+         
+          
+          m <- leaflet()%>%
           
           addTiles(
             urlTemplate = paste0("https://basemaps.cartocdn.com/rastertiles/light_all/{z}/{x}/{y}.png?key=", rv$carto_api_key),
             attribution = '© CARTO © OpenStreetMap',
             group = "CARTO") %>%
           
-          addProviderTiles(providers$Esri.WorldImagery,group = "Satel.lit") %>%
+          addProviderTiles(providers$Esri.WorldImagery,group = "Satel.lit") 
+          
+          # Només afegeix hàbitats si n'hi ha
+                  if(!is.null(habitat_sf) && nrow(habitat_sf) > 0){
+          m <- m %>%
+            addPolygons(data= habitat_sf,
+                        fillColor = ~pal_hab(cat_lleg), 
+                        fillOpacity=0.7, 
+                        weight=0.5,
+                        popup = ~paste0(cat_lleg), 
+                        group="Habitats")}
+          m %>%       
                  
           addPolygons(data= rv$quad_10_selecc_sf, 
                       fillOpacity=0, 
@@ -1279,7 +1364,7 @@ server <- function(input, output,session) {
                       fillColor =  ~rv$paleta_muni_(rv$municipis_litorals_sf_1x1$comarques_),
                       weight = 1,
                       color = "black",
-                      popup =  paste ("Municipi: ",rv$municipis_litorals_sf_1x1$nommuni,
+                      popup =  paste ("Municipi: ",rv$municipis_litorals_sf_1x13$nommuni,
                                       "<br>",
                                       "Comarca: ",rv$municipis_litorals_sf_1x1$comarques_,
                                       "<br>",
@@ -1291,76 +1376,79 @@ server <- function(input, output,session) {
             layers = "isobates_clar_2500000,isobates_clar_600000,isobates_clar_300000,isobates_clar_100000,isobates_clar_5000",
             group = "batimetria",
             options = WMSTileOptions(format = "image/png", transparent = TRUE, version = "1.3.0"),
-            attribution = "ICGC"
-          ) %>%
-          
-          
-          addMarkers(data = observacio_quadricula_10,
-                     lng = observacio_quadricula_10$longitude, lat =  observacio_quadricula_10$latitude,
-                     popup = ~paste0("Link observació: ",'<a href= "',observacio_quadricula_10$uri,'" target="_blank">', 'ID ',observacio_quadricula_10$id,'</a>',
-                                     '<br>',"Observador/a: ",observacio_quadricula_10$user_login,
-                                     '<br>',"Data: ",observacio_quadricula_10$observed_on),
+            attribution = "ICGC") %>%
+            
+            addMarkers(data = rv$observacio_quadricula_10,
+                     lng = rv$observacio_quadricula_10$longitude, 
+                     lat =  rv$observacio_quadricula_10$latitude,
+                     clusterOptions = markerClusterOptions(spiderfyOnMaxZoom = TRUE),
+                     popup = ~paste0("Link observació: ",'<a href= "',rv$observacio_quadricula_10$uri,'" target="_blank">', 'ID ',observacio_quadricula_10$id,'</a>',
+                                     '<br>',"Observador/a: ",rv$observacio_quadricula_10$user_login,
+                                     '<br>',"Data: ",rv$observacio_quadricula_10$observed_on,
+                                     '<br>'),
                      options = markerOptions(draggable = FALSE),
                      group = "observacions quadricula 1x1") %>%
+            
+            addPopupImages( observacio_quadricula_10$url_picture,
+                            group = "observacions quadricula 1x1", width = 150) %>%
         
-         addLayersControl(baseGroups = c("CARTO", "Satel.lit"),
-                         overlayGroups = c("observacions quadricula 1x1","Municipis","Quadricula 1x1","Quadricula 10x10","batimetria"),
+            addLayersControl(baseGroups = c("CARTO", "Satel.lit"),
+                         overlayGroups = c("observacions quadricula 1x1","Municipis","Habitats","Quadricula 1x1","Quadricula 10x10","batimetria"),
                          options = layersControlOptions(collapsed = TRUE))
         
         
       }) #tancament map3
           
+  #------------------Llegenda d habitats fora del leaflet---------------------
       
-      
-      output$valores_seleccionados <- renderDT({
-        datatable(
-          {
-            
-            
-            {
-              
-              
-              # Nova columna amb enllços
-              
-              observacio_quadricula_10$Link <- mapply(
-                
-                function(nombre, url) {
-                  
-                  as.character(htmltools::a(nombre, href = url,target="_blank"))
-                  
-                },
-                
-                observacio_quadricula_10$uri,
-                
-                observacio_quadricula_10$uri
-                
-              )
-              
-              # No mostrem URL sense enllaç
-              
-              observacio_quadricula_10 <- subset(observacio_quadricula_10, select = -uri)
-              
-            }
-            
-            
-            
-          },
-          escape = FALSE,
-          filter = 'top',  # Filtros en la parte superior de la tabla
-          options = list(
-            pageLength = 10, # Mostrar 5 filas por página
-            lengthMenu = c( 10, 15, 20), # Opciones de filas por página
-            dom = 'lfrtip'  # Orden de los elementos de la tabla (filtrado, longitud, información, etc.)
-          ),
-          rownames = FALSE # No mostrar los números de fila
+      output$leyenda_habitats <- renderUI({
+        req(rv$habitat_sf)
+        if(nrow(rv$habitat_sf)==0) return(NULL)
+        
+        cats <- sort(unique(rv$habitat_sf$cat_lleg))
+        cols <- rv$pal_hab(cats)
+        
+        div(style="background:white; padding:8px 10px; border:1px solid #ddd; border-top:0; border-radius:0 0 6px 6px;",
+            div(style="font-size:11px; font-weight:bold; margin-bottom:6px;", paste0("Hàbitats UTM ", rv$quad_actual)),
+            div(style="display:flex; flex-wrap:wrap; gap:6px 16px;",
+                lapply(seq_along(cats), function(i){
+                  div(style="display:flex; align-items:center;",
+                      div(style=paste0("width:11px; height:11px; background:", cols[i], "; margin-right:5px; border:1px solid #999; flex-shrink:0;")),
+                      span(style="font-size:11px; line-height:11px;", cats[i])
+                  )
+                })
+            )
         )
-      }, sanitize.text.function = function(x) x)
+      })
       
-    
-    }  # tancament de l else del waiter
-    
-  }) #tancament del button 1x1_indiv
-  
+      
+#-----DataTble d observacions puntuals---------------------------------------      
+      
+      #-----DataTable d'observacions puntuals---------------------------------------
+      req(nrow(observacio_quadricula_10)> 0)
+      
+      # Assegura't noms reals
+ 
+      df_plot <- data.frame(
+        ID = paste0('<a href="', rv$observacio_quadricula_10$uri, '" target="_blank">', rv$observacio_quadricula_10$id_minka, '</a>'),
+        Imatge = ifelse(is.na(rv$observacio_quadricula_10$url_picture), "",
+                        paste0("<img src='",rv$observacio_quadricula_10$url_picture, "' width='75' height='75' style='object-fit:cover; border-radius:4px;'>")),
+        Data = rv$observacio_quadricula_10$observed_on,
+        Observador = rv$observacio_quadricula_10$user_login,
+        Codi_CORINE =rv$observacio_quadricula_10$cat_lleg
+      )
+
+
+      output$valors_seleccionats <- DT::renderDataTable({
+        DT::datatable(df_plot, escape = FALSE, filter='top',
+                      options=list(pageLength=25), rownames=FALSE)
+      })
+  #     
+    }  # tancament de l else
+
+  }) #tancament del button individula
+
+      
   
   #================================================================================================
   
@@ -1425,12 +1513,13 @@ server <- function(input, output,session) {
       # ara si
       dat <- as.data.table(Observacions_especie_NA10x10)
       
+      rv$obs_10x10 <- dat
       
       #Cal treballar amb matrius i cal que els noms de la latitut i long estiguin definits
       
-      colnames(dat)<-c("longitude","latitude")
+      colnames(rv$obs_10x10)<-c("longitude","latitude")
       
-      kde <- bkde2D (dat[ , list(longitude, latitude)],
+      kde <- bkde2D (rv$obs_10x10[ , list(longitude, latitude)],
                      bandwidth=c(.0045, .0068), gridsize = c(1000,1000))
       
       #En la funcio quan mes gran es la grid size mes definit esta
