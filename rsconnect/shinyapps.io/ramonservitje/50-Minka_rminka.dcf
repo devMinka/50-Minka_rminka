@@ -5,7 +5,7 @@ account: ramonservitje
 server: shinyapps.io
 hostUrl: https://api.shinyapps.io/v1
 appId: 18084250
-bundleId: 12656290
+bundleId: 12665620
 url: https://ramonservitje.shinyapps.io/50-Minka_rminka/
 version: 1
 asMultiple: FALSE
