@@ -63,3 +63,11 @@
   box-shadow: 0 4px 0 #1a3d7c, 0 6px 12px rgba(0,0,0,0.3) !important;
   transition: all 0.1s ease !important;
 }
+
+#tabset li.nav-header{
+  font-weight: 900 !important;
+  font-size: 28px !important;
+  color: #000 !important;
+  text-decoration: underline !important;
+  text-underline-offset: 4px;
+}

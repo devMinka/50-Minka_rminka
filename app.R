@@ -131,7 +131,7 @@ ui <- fluidPage(
     
     #Carregem l arxiu css pel document a imprimir
     
-    tags$link(rel = "stylesheet", href = "style.css"),
+    tags$link(rel = "stylesheet", href = "style.css?v=2"),
     
     #  Carga la llibreria html2pdf i l escript per crear el pdf i configurar
     
@@ -150,8 +150,9 @@ ui <- fluidPage(
   h1("Anàlisi Observacións Marines   ",img(src="logo_minka.png", width="120" ,height="40"),),
   
   navlistPanel(
-    
-    id = "tabset","MENU",well = TRUE,
+    id = "tabset",
+    HTML("<span style='font-size:22px !important; font-weight:900; border-bottom:3px solid black;'>MENU</span>"),
+    well = TRUE,
     
     #===========================TABPANEL 1=====Quadricula 10x10==================
     
@@ -1314,12 +1315,12 @@ server <- function(input, output,session) {
       
  #----------------Tractament link imatges----------------------------------------
       
-      observacio_quadricula_10$url_picture <- gsub(
-        "minka-sdg.org",
-        "observe.minka-sdg.org",
-        observacio_quadricula_10$url_picture,
-        fixed = TRUE
-      )
+      # observacio_quadricula_10$url_picture <- gsub(
+      #   "minka-sdg.org",
+      #   "observe.minka-sdg.org",
+      #   observacio_quadricula_10$url_picture,
+      #   fixed = TRUE
+      # )
 
       rv$observacio_quadricula_10 <- observacio_quadricula_10
       
@@ -1532,6 +1533,7 @@ server <- function(input, output,session) {
         Profund. = paste0(round(rv$observacio_quadricula_10$profunditat,1)," mts"),
         Habitat_CRN =rv$observacio_quadricula_10$cat_lleg,
         Subtrat_fons = rv$observacio_quadricula_10$des_fons,
+        URL_im= rv$observacio_quadricula_10$url_picture,
         stringsAsFactors = FALSE
       )
 
