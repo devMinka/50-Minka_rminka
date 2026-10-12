@@ -329,8 +329,8 @@ ui <- fluidPage(
     #===========================TABPANEL 3=====Observac puntuals====================
     
     tabPanel("Observacions de l´especie individuals",
-             tags$b( "Seleciona la xinxeta per veure el pop-up amb el detall de l´observació. 
-                     Selecciona la capa amb el control dret superior. Clickan sobre la capa es veu el seu valor") ,
+             tags$b( "Seleciona la xinxeta per veure el detall de l´observació. 
+                     Selecciona la capa amb el control dret superior. Clicant sobre la capa es veu el seu valor") ,
              
              sidebarLayout(
                
@@ -785,6 +785,8 @@ server <- function(input, output,session) {
           geom_text(aes(label = observacions_any), vjust= -0.5) +
           
           geom_smooth(method = 'lm',formula = y ~ x, se=FALSE, color = 'red') +
+          
+          coord_cartesian(ylim=c(0, NA)) +
           
           labs(x="Any", y= "Num observ",caption = stringr::str_wrap(paste("Observacions anuals ", rv$especie_actual," a tot Catalunya de l´any",rv$rango[1], " al ",  rv$rango[2] ))) +
           
@@ -1318,7 +1320,7 @@ server <- function(input, output,session) {
         observacio_quadricula_10$url_picture,
         fixed = TRUE
       )
-      
+
       rv$observacio_quadricula_10 <- observacio_quadricula_10
       
   #----------Mapa de punts d observacio amb capa d habitat-----------------------    
@@ -1519,7 +1521,7 @@ server <- function(input, output,session) {
       #-----DataTable d'observacions puntuals---------------------------------------
       req(nrow(observacio_quadricula_10)> 0)
       
-      # Assegura't noms reals
+      # construccio del DT
  
       df_plot <- data.frame(
         ID = paste0('<a href="', rv$observacio_quadricula_10$uri, '" target="_blank">', rv$observacio_quadricula_10$id_minka, '</a>'),
@@ -1665,7 +1667,10 @@ server <- function(input, output,session) {
       
       KernelDensityRaster@data@values[which(KernelDensityRaster@data@values < 1)] <- NA
       
-      palRaster <- colorNumeric("Spectral", domain = KernelDensityRaster@data@values, na.color = "transparent")
+      palRaster <- colorNumeric("Spectral", 
+                                domain = KernelDensityRaster@data@values, 
+                                na.color = "transparent",
+                                reverse = TRUE)
       
       ##Text heatmap
       
