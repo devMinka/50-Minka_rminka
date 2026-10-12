@@ -208,16 +208,13 @@ ui <- fluidPage(
                
                
                mainPanel(
-                 
-                 
-                 br(),
+        
                  
                  div(id = "contingut_a_imprimir_1",
-                     
+                     br(),
                      tags$div(
                        class = "titol",textOutput(outputId = "titol_espec_catalunya")),
                      
-                     br(),
                      
                      textOutput(outputId = "espec_catalunya"),
                      
@@ -259,23 +256,13 @@ ui <- fluidPage(
     
     tabPanel("Observacions de l´especie per quadricules marines 1x1",
              tags$b("Seleciona la quadricula per veure el pop-up de les observacions. Es poden treure capes deseleccionat del control dret superior") ,
-             
-             
              sidebarLayout(
-               
                sidebarPanel(
-                 
                  fluidRow(
-                   
-                   
                    selectInput(
-                     
                      inputId = "quadricula",
-                     
                      label = "5- Selecciona quadricula 10x10",
-                     
                      choices = Quadricules_10x10_sf$COORD_10K),
-                   
                    div(style = "margin-top: 20px;",
                        tags$p("6- Pulsa el botó per generar el plànol de l´UTM")),
                    
@@ -302,11 +289,6 @@ ui <- fluidPage(
                      
                      tags$div(
                        class = "titol",textOutput(outputId = "titol_espec_catalunya_1x1")),
-                     
-                     br(),
-                     
-                     
-                     br(),
                      
                      textOutput(outputId = "espec_quadricula"),
                      
@@ -347,15 +329,15 @@ ui <- fluidPage(
     #===========================TABPANEL 3=====Observac puntuals====================
     
     tabPanel("Observacions de l´especie individuals",
-             tags$b( "Seleciona la xinxeta per veure el pop-up amb el detall de l´observació. Es poden treure capes deseleccionat del control dret superior") ,
-             
+             tags$b( "Seleciona la xinxeta per veure el pop-up amb el detall de l´observació. 
+                     Selecciona la capa amb el control dret superior. Clickan sobre la capa es veu el seu valor") ,
              
              sidebarLayout(
                
                sidebarPanel(
                  fluidRow(
                    
-                   p("Detall de les observacions de la quadricula"),
+                   p("Representem les observacions dins la quadricula UTM seleccionada en l apartat anterior."),
                    
                    div(style = "margin-top: 20px;",
                        tags$p("6- Pulsa el botó per generar el plànol de les obs indiv")),
@@ -465,7 +447,8 @@ server <- function(input, output,session) {
     habitat_sf = NULL,     #capa d habitats
     pal_hab = NULL,       #Paleta de a capa d habitats
     observacio_quadricula_10 = NULL,
-    map3_generat = FALSE #per cativar els filtres del DT del map3
+    map3_generat = FALSE, #per cativar els filtres del DT del map3
+    limits_box = FALSE #limit quadricula 10x10 selecionada
   )
   
   # Funció per errors
@@ -493,8 +476,8 @@ server <- function(input, output,session) {
     
     #----------comprovem quela primera lletra del nom cientific es majuscula----
    
-        if ( (input$especie) == "INTRODUIR AQUI NOM CIENTIFIC") {
-      mostrar_error("Cal que borrar el contingut del quadre i introduir el nom cièntific de l´especie a estudiar")
+        if ( (input$especie) == "") {
+      mostrar_error("Cal introduir el nom cièntific de l´especie a estudiar en el quadre de text")
       return()
     }
     
@@ -653,12 +636,13 @@ server <- function(input, output,session) {
       mymap1 <- reactive({
         
         leaflet() %>%
+          
+        setView(lng = 1.8, lat = 41.5, zoom = 7.4) %>%
         
         addTiles(
           urlTemplate = paste0("https://basemaps.cartocdn.com/rastertiles/light_all/{z}/{x}/{y}.png?key=", rv$carto_api_key),
           attribution = '© CARTO © OpenStreetMap',
-          group = "CARTO"
-          ) %>%
+          group = "CARTO") %>%
           
           addProviderTiles(providers$Esri.WorldImagery,group = "Satel.lit") %>%
           
@@ -699,7 +683,7 @@ server <- function(input, output,session) {
                       group = "Nº d´observacions x quadricula",
                       popup =  paste("Nº d observacions:", as.character(Especies_Minka_quadricula10x10$n_obs),
                                       "<br>",
-                                      "Quadricula:",(Especies_Minka_quadricula10x10$coord_10))) %>%
+                                      "Quadricula:",(Especies_Minka_quadricula10x10$coord_10))) %>% 
           
           addLayersControl(baseGroups = c("CARTO", "Satel.lit"),
                            overlayGroups = c("Municipis"),
@@ -716,8 +700,6 @@ server <- function(input, output,session) {
             group = "Nº d´observacions x quadricula"
           )
           
-
-        
       })
       
       output$map1 <- renderLeaflet( mymap1() )
@@ -857,9 +839,7 @@ server <- function(input, output,session) {
     req(rv$listo_10x10) # si no hay datos de 10x10, no hace nada. Adiós token.
     req(rv$quad_10x10)
     rv$quad_actual <- input$quadricula
-    
-    
-    
+    rv$limits_box <- NULL
     if (rv$listo_10x10 == FALSE ){
       
       mostrar_error("Selecciona primer l especie")
@@ -1005,10 +985,11 @@ server <- function(input, output,session) {
       paleta_espec1x1 <- colorBin(palette = rv$pal_ , domain = Especies_Minka_quadricula1x1$n_observacions1x1 , bins = 4)
       
       
+      limits_box <- sf::st_bbox(quad_10_selecc_sf)
       
       output$map2 <- renderLeaflet({
         
-        leaflet()%>%
+    m <-  leaflet()%>%
           
           addTiles(
             urlTemplate = paste0("https://basemaps.cartocdn.com/rastertiles/light_all/{z}/{x}/{y}.png?key=", rv$carto_api_key),
@@ -1071,11 +1052,12 @@ server <- function(input, output,session) {
                       group = "Nº d´observacions x quadricula 1x1",
                       popup =  ~paste ("Nº d observacions:", as.character(Especies_Minka_quadricula1x1$n_observacions1x1),
                                       "<br>",
-                                      "Quadricula:",(Especies_Minka_quadricula1x1$cod1x1)))%>%
-          
-          
-          
-          
+                                      "Quadricula:",(Especies_Minka_quadricula1x1$cod1x1)))
+    
+    m <- m %>% fitBounds(limits_box[[1]], limits_box[[2]], limits_box[[3]], limits_box[[4]])
+    
+    m <- m %>%
+ 
           addLayersControl(baseGroups = c("CARTO", "Satel.lit"),
                            overlayGroups = c("Municipis","batimetria"),
                            options = layersControlOptions(collapsed = TRUE))  %>%
@@ -1145,15 +1127,7 @@ server <- function(input, output,session) {
           theme_classic() + theme( panel.background = element_rect(fill = '#f7f9fc'),
                                  
                                  plot.caption = element_text( hjust = 0.5, size =14))
-        
       })
-      #----------------------Variables globals a compartir en el següent apartat-----------
-      
-      rv$quad_10_selecc_sf = quad_10_selecc_sf
-      rv$municipis_litorals_sf_1x1 = municipis_litorals_sf_1x1
-      rv$Quadricules_1x1_en_10x10_sf= Quadricules_1x1_en_10x10_sf 
-      
-      #---------------------------------------------------------------------------------------------------------
       
       #----------------------Titol grafic mensuals 1x1--------------------------------
       
@@ -1180,11 +1154,8 @@ server <- function(input, output,session) {
       
       Especies_Minka_mes_1x1$mes <- factor(Especies_Minka_mes_1x1$month, levels = 1:12, labels = c("Gener","Febrer","Març","Abril","Maig","Juny","Juliol","Agost","Setembre","Octubre","Novembre","Decembre"))
       
-      
-      
       #----------------------Grafic mensuals 1x1---------------------------------------------------------
     
-      # 
       output$grafica_mes_1x1 <- renderPlot({
 
         ggplot(Especies_Minka_mes_1x1,aes(x = mes, y = observacions_mes)) +
@@ -1202,17 +1173,23 @@ server <- function(input, output,session) {
                                  plot.caption = element_text( hjust = 0.5, size =14))
 
       })
-    #-----------------------------------------------------------------------------
+   
+  #----------------------Variables globals a compartir en el següent apartat-----------
       
-      #Poso a NULL els valors per contruir el map3 del seguent apartat
+      rv$quad_10_selecc_sf = quad_10_selecc_sf
+      rv$municipis_litorals_sf_1x1 = municipis_litorals_sf_1x1
+      rv$Quadricules_1x1_en_10x10_sf= Quadricules_1x1_en_10x10_sf 
+      rv$limits_box <- limits_box
       
-
+  #----------------------Poso a NULL els valors per contruir el map3 del seguent apartat
+      
       output$llegenda <- renderUI({ NULL})
       output$map3 <- renderLeaflet({ NULL })
       output$titol_DT <- renderText({""}) 
       output$valors_seleccionats <- DT::renderDataTable({ NULL})
       rv$map3_generat <- FALSE
-      # #---------------------------------------------------------------------------------------------------------
+
+  #---------------------------------------------------------------------------------------------------------
       
     }  # tancament de l else
     
@@ -1430,12 +1407,14 @@ server <- function(input, output,session) {
                         group = "Substrat_fons"
             )}
           
-          
+          m <- m %>% fitBounds(rv$limits_box[[1]],rv$limits_box[[2]], 
+                               rv$limits_box[[3]], rv$limits_box[[4]])
           
           m %>%       
             
             addPopupImages( observacio_quadricula_10$url_picture,
                             group = "observacions quadricula 1x1", width = 150) %>%
+            
         
             addLayersControl(baseGroups = c("CARTO", "Satel.lit"),
                          overlayGroups = c("Municipis","Quadricules 1x1","Habitats_CORINE","Substrat_fons","Batimetria"),
